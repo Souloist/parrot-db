@@ -1,4 +1,4 @@
-from parrot import ParrotDB
+from db import ParrotDB
 
 
 def main():
