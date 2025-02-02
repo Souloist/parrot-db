@@ -47,6 +47,7 @@ def test_rollback_transaction(db) -> None:
     db.begin()
     db.set("name", "not richard")
     assert db.count("not richard") == 1
+    assert db.get("name") == "not richard"
     db.rollback()
     assert db.get("name") == "richard"
 

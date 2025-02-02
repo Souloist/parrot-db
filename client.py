@@ -1,5 +1,6 @@
 from db import ParrotDB
 from exceptions import KeyNotFound, NoActiveTransactions
+from pprint import pprint
 
 
 def main():
@@ -38,20 +39,26 @@ def main():
                 db.set(key, value)
                 print(f"Set {key} to {value}")
             elif action == "get":
-                value = db.get(key)
-                if value is not None:
+                if len(parts) > 3:
+                    print("Invalid command. Use get <key>.")
+                    continue
+                try:
+                    value = db.get(key)
                     print(f"Get {key}: {value}")
-                else:
-                    print(f"No value for {key}.")
+                except KeyNotFound:
+                    print(f"Key not found")
             elif action == "delete":
                 if len(parts) > 3:
-                    print("Invalid command. Use set <key> <value>.")
+                    print("Invalid command. Use delete <key>.")
                     continue
                 try:
                     db.delete(key)
                     print(f"Deleted {key}")
                 except KeyNotFound:
                     print(f"Key not found")
+            elif action == "count":
+                count = db.count(key)
+                print(f"There are {count} keys with value {key}")
             elif action == "begin":
                 db.begin()
             elif action == "commit":
@@ -64,6 +71,9 @@ def main():
                     db.rollback()
                 except NoActiveTransactions:
                     print(f"Cannot rollback with no active transactions")
+            elif action == "show":
+                json = db.show_state()
+                pprint(json)
             else:
                 print("Unknown command.")
         except KeyboardInterrupt:
