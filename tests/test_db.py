@@ -1,6 +1,6 @@
 import pytest
 
-from db import ParrotDB, NOT_FOUND
+from db import ParrotDB, KEY_NOT_FOUND
 
 
 @pytest.fixture
@@ -16,13 +16,13 @@ def test_add_key(db) -> None:
 
 
 def test_get_missing_key(db) -> None:
-    assert db.get("Something") == NOT_FOUND
+    assert db.get("Something") == KEY_NOT_FOUND
 
 
 def test_remove_key(db) -> None:
     db.set("name", "Jamie")
     db.delete("name")
-    assert db.get("name") == NOT_FOUND
+    assert db.get("name") == KEY_NOT_FOUND
 
 
 def test_count_values(db) -> None:
