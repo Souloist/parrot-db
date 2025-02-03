@@ -4,10 +4,22 @@ via on disk logs
 
 ## How to run
 
-```sh
-python client.py
-```
+Running `python client.py` will display the following:
 
+```
+Welcome to Parrot database!
+Commands:
+    set <key> <value>   - Sets the value for the given key
+    get <key>           - Returns the value for the given key
+    count <value>       - Returns number of keys with given value
+    delete <key>        - Deletes key
+    exit                - Exits the program
+
+    begin               - Begins a transaction. Supported nested transactions
+    commit              - Commits current transaction
+    rollback            - Rollback current transaction
+>
+```
 
 ## Features to improve on
 
