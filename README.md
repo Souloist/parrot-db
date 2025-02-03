@@ -1,4 +1,4 @@
-# parrot-db
+# parrot-db 🦜
 Toy project of implementing a KV Database which supports transactions (OCC via snapshot isolation) and recovery
 via on disk logs
 
