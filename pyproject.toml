@@ -1,0 +1,20 @@
+[project]
+name = "parrot-db"
+version = "0.1.0"
+description = "Toy KV database with transaction support via snapshot isolation"
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.10.6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "ruff>=0.14.11",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]

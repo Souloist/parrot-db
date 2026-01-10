@@ -2,9 +2,20 @@
 Toy project of implementing a KV Database which supports transactions (OCC via snapshot isolation) and recovery
 via on disk logs
 
+## Setup
+
+```bash
+uv venv
+uv sync
+```
+
 ## How to run
 
-Running `python client.py` will display the following:
+```bash
+uv run python client.py
+```
+
+This will display the following:
 
 ```
 Welcome to Parrot database!
@@ -19,6 +30,12 @@ Commands:
     commit              - Commits current transaction
     rollback            - Rollback current transaction
 >
+```
+
+## Tests
+
+```bash
+uv run pytest
 ```
 
 ## Features to improve on

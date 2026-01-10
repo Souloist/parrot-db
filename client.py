@@ -1,6 +1,7 @@
+from pprint import pprint
+
 from db import ParrotDB
 from exceptions import KeyNotFound, NoActiveTransactions
-from pprint import pprint
 
 
 def main():
@@ -13,7 +14,7 @@ def main():
         count <value>       - Returns number of keys with given value
         delete <key>        - Deletes key
         exit                - Exits the program
-        
+
         begin               - Begins a transaction. Supported nested transactions
         commit              - Commits current transaction
         rollback            - Rollback current transaction
@@ -46,7 +47,7 @@ def main():
                     value = db.get(key)
                     print(f"Get {key}: {value}")
                 except KeyNotFound:
-                    print(f"Key not found")
+                    print("Key not found")
             elif action == "delete":
                 if len(parts) > 3:
                     print("Invalid command. Use delete <key>.")
@@ -55,7 +56,7 @@ def main():
                     db.delete(key)
                     print(f"Deleted {key}")
                 except KeyNotFound:
-                    print(f"Key not found")
+                    print("Key not found")
             elif action == "count":
                 count = db.count(key)
                 print(f"There are {count} keys with value {key}")
@@ -65,12 +66,12 @@ def main():
                 try:
                     db.commit()
                 except NoActiveTransactions:
-                    print(f"Cannot commit with no active transactions")
+                    print("Cannot commit with no active transactions")
             elif action == "rollback":
                 try:
                     db.rollback()
                 except NoActiveTransactions:
-                    print(f"Cannot rollback with no active transactions")
+                    print("Cannot rollback with no active transactions")
             elif action == "show":
                 json = db.show_state()
                 pprint(json)
@@ -81,5 +82,5 @@ def main():
             break
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

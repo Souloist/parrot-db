@@ -132,8 +132,4 @@ class ParrotDB:
 
     def show_state(self):
         """Helper function to return state, current version and current active transactions"""
-        return {
-            "data": self._data,
-            "current_version": self._current_version,
-            "active_transactions": self._transactions
-        }
+        return {"data": self._data, "current_version": self._current_version, "active_transactions": self._transactions}
