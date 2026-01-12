@@ -21,7 +21,7 @@ import struct
 import zlib
 from typing import ClassVar, Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from models import PageHeader, PageType
 from models.metadata import MAGIC
@@ -42,6 +42,9 @@ FREELIST_COUNT_FMT = "<I"
 # Leaf page format (after PageHeader): [cell_count:2][right_sibling:4][cell_offsets...][cells...]
 LEAF_HEADER_FMT = "<HI"
 LEAF_HEADER_SIZE = 6
+
+# Cell format in leaf pages: [key_len:2][value_len:2][key][value]
+CELL_HEADER_SIZE = 4  # key_len (2) + value_len (2)
 
 # Branch page format (after PageHeader): [key_count:2][children:4*(key_count+1)][keys...]
 BRANCH_HEADER_FMT = "<H"
@@ -181,7 +184,7 @@ class FreelistPage(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     page_id: int
-    free_page_ids: list[int] = []
+    free_page_ids: list[int] = Field(default_factory=list)
 
     def to_bytes(self, page_size: int = DEFAULT_PAGE_SIZE) -> bytes:
         """Serialize to a full page with header and checksum."""
@@ -259,7 +262,7 @@ class LeafPage(BaseModel):
 
     page_id: int
     right_sibling: int = 0  # Page ID of right sibling (0 = none)
-    cells: list[tuple[bytes, bytes]] = []  # (key, value) pairs
+    cells: list[tuple[bytes, bytes]] = Field(default_factory=list)  # (key, value) pairs
 
     def to_bytes(self, page_size: int = DEFAULT_PAGE_SIZE) -> bytes:
         """Serialize to a full page with header and checksum."""
@@ -319,7 +322,7 @@ class LeafPage(BaseModel):
         """Calculate available space for new cells in bytes.
 
         Returns the number of bytes available for additional cell data.
-        Each new cell requires: 2 (offset) + 4 (key_len + value_len) + len(key) + len(value)
+        Each new cell requires: 2 (offset) + CELL_HEADER_SIZE + len(key) + len(value)
         """
         # Fixed overhead: PageHeader + leaf_header (cell_count + right_sibling)
         fixed_overhead = PageHeader.SIZE + LEAF_HEADER_SIZE
@@ -328,7 +331,7 @@ class LeafPage(BaseModel):
         offsets_size = 2 * len(self.cells)
 
         # Current cell data size
-        cells_size = sum(4 + len(key) + len(value) for key, value in self.cells)
+        cells_size = sum(CELL_HEADER_SIZE + len(key) + len(value) for key, value in self.cells)
 
         used = fixed_overhead + offsets_size + cells_size
         return max(0, page_size - used)
@@ -355,9 +358,10 @@ class LeafPage(BaseModel):
         # Read cells
         cells = []
         for cell_offset in cell_offsets:
-            key_len, value_len = struct.unpack("<HH", data[cell_offset : cell_offset + 4])
-            key = data[cell_offset + 4 : cell_offset + 4 + key_len]
-            value = data[cell_offset + 4 + key_len : cell_offset + 4 + key_len + value_len]
+            key_len, value_len = struct.unpack("<HH", data[cell_offset : cell_offset + CELL_HEADER_SIZE])
+            key_start = cell_offset + CELL_HEADER_SIZE
+            key = data[key_start : key_start + key_len]
+            value = data[key_start + key_len : key_start + key_len + value_len]
             cells.append((key, value))
 
         if verify_checksum:
@@ -384,8 +388,8 @@ class BranchPage(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     page_id: int
-    keys: list[bytes] = []  # Separator keys
-    children: list[int] = []  # Child page IDs (len = len(keys) + 1)
+    keys: list[bytes] = Field(default_factory=list)  # Separator keys
+    children: list[int] = Field(default_factory=list)  # Child page IDs (len = len(keys) + 1)
 
     @model_validator(mode="after")
     def validate_children_keys_invariant(self) -> Self:
