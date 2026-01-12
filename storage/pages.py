@@ -105,22 +105,24 @@ class MetaPage(BaseModel):
 
     def to_bytes(self, page_size: int = DEFAULT_PAGE_SIZE) -> bytes:
         """Serialize to a full page with header and checksum."""
-        # Pack meta data (without checksum first)
+        # Pack meta data
         meta_data = struct.pack(META_PAGE_FMT, self.txn_id, self.root_page_id, self.freelist_page_id)
 
         # Create header with placeholder checksum
         header = PageHeader(page_type=PageType.META, page_id=self.page_id, checksum=0)
         header_bytes = header.to_bytes()
 
-        # Compute checksum over header (with zero checksum) + meta_data
-        content = header_bytes + meta_data
-        checksum = compute_checksum(content)
+        # Assemble full page first (with padding)
+        full_page = (header_bytes + meta_data).ljust(page_size, b"\x00")
+
+        # Compute checksum over entire page
+        checksum = compute_checksum(full_page)
 
         # Repack header with actual checksum
         header = PageHeader(page_type=PageType.META, page_id=self.page_id, checksum=checksum)
         header_bytes = header.to_bytes()
 
-        return (header_bytes + meta_data).ljust(page_size, b"\x00")
+        return header_bytes + full_page[PageHeader.SIZE :]
 
     @classmethod
     def from_bytes(cls, data: bytes, verify_checksum: bool = True) -> Self:
@@ -139,10 +141,10 @@ class MetaPage(BaseModel):
         )
 
         if verify_checksum:
-            # Zero out checksum field and recompute
+            # Compute checksum over entire page (with zero checksum in header)
             header_with_zero = PageHeader(page_type=PageType.META, page_id=header.page_id, checksum=0)
-            content = header_with_zero.to_bytes() + data[meta_offset : meta_offset + META_PAGE_DATA_SIZE]
-            expected = compute_checksum(content)
+            check_data = header_with_zero.to_bytes() + data[PageHeader.SIZE :]
+            expected = compute_checksum(check_data)
             if header.checksum != expected:
                 raise ValueError(f"Checksum mismatch: expected {expected}, got {header.checksum}")
 
@@ -178,15 +180,17 @@ class FreelistPage(BaseModel):
         header = PageHeader(page_type=PageType.FREELIST, page_id=self.page_id, checksum=0)
         header_bytes = header.to_bytes()
 
-        # Compute checksum
-        content = header_bytes + freelist_data
-        checksum = compute_checksum(content)
+        # Assemble full page first (with padding)
+        full_page = (header_bytes + freelist_data).ljust(page_size, b"\x00")
+
+        # Compute checksum over entire page
+        checksum = compute_checksum(full_page)
 
         # Repack with actual checksum
         header = PageHeader(page_type=PageType.FREELIST, page_id=self.page_id, checksum=checksum)
         header_bytes = header.to_bytes()
 
-        return (header_bytes + freelist_data).ljust(page_size, b"\x00")
+        return header_bytes + full_page[PageHeader.SIZE :]
 
     @classmethod
     def from_bytes(cls, data: bytes, verify_checksum: bool = True) -> Self:
@@ -212,13 +216,10 @@ class FreelistPage(BaseModel):
             offset += 4
 
         if verify_checksum:
-            # Reconstruct content for checksum verification
+            # Compute checksum over entire page (with zero checksum in header)
             header_with_zero = PageHeader(page_type=PageType.FREELIST, page_id=header.page_id, checksum=0)
-            freelist_data = struct.pack(FREELIST_COUNT_FMT, count)
-            for pid in free_page_ids:
-                freelist_data += struct.pack("<I", pid)
-            content = header_with_zero.to_bytes() + freelist_data
-            expected = compute_checksum(content)
+            check_data = header_with_zero.to_bytes() + data[PageHeader.SIZE :]
+            expected = compute_checksum(check_data)
             if header.checksum != expected:
                 raise ValueError(f"Checksum mismatch: expected {expected}, got {header.checksum}")
 
