@@ -21,7 +21,7 @@ import struct
 import zlib
 from typing import ClassVar, Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from models import PageHeader, PageType
 from models.metadata import MAGIC
@@ -386,6 +386,18 @@ class BranchPage(BaseModel):
     page_id: int
     keys: list[bytes] = []  # Separator keys
     children: list[int] = []  # Child page IDs (len = len(keys) + 1)
+
+    @model_validator(mode="after")
+    def validate_children_keys_invariant(self) -> Self:
+        """Ensure len(children) == len(keys) + 1 for non-empty pages."""
+        if not self.keys and not self.children:
+            return self
+        if len(self.children) != len(self.keys) + 1:
+            raise ValueError(
+                f"BranchPage invariant violated: len(children)={len(self.children)} "
+                f"must equal len(keys)+1={len(self.keys) + 1}"
+            )
+        return self
 
     def to_bytes(self, page_size: int = DEFAULT_PAGE_SIZE) -> bytes:
         """Serialize to a full page with header and checksum."""
