@@ -28,9 +28,9 @@ from models.metadata import MAGIC
 
 DEFAULT_PAGE_SIZE = 4096
 
-# Header page format: [magic:4][version:4][page_size:4] = 12 bytes
-HEADER_PAGE_FMT = "<4sII"
-HEADER_PAGE_SIZE = 12
+# Header page format: [magic:4][version:4][page_size:4][checksum:4] = 16 bytes
+HEADER_PAGE_FMT = "<4sIII"
+HEADER_PAGE_SIZE = 16
 
 # Meta page format (after PageHeader): [txn_id:8][root_page_id:4][freelist_page_id:4] = 16 bytes
 META_PAGE_FMT = "<QII"
@@ -57,7 +57,7 @@ class HeaderPage(BaseModel):
     """Database file header (page 0).
 
     Contains magic bytes to identify this as a parrot-db file,
-    format version for compatibility, and page size.
+    format version for compatibility, page size, and checksum.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -65,25 +65,40 @@ class HeaderPage(BaseModel):
     SIZE: ClassVar[int] = HEADER_PAGE_SIZE
 
     magic: bytes = MAGIC
-    version: int = 1
+    version: int = 2
     page_size: int = DEFAULT_PAGE_SIZE
 
     def to_bytes(self, page_size: int | None = None) -> bytes:
-        """Serialize to a full page. Pads to page_size."""
+        """Serialize to a full page with checksum."""
         size = page_size or self.page_size
-        data = struct.pack(HEADER_PAGE_FMT, self.magic, self.version, self.page_size)
+
+        # Pack with placeholder checksum (0)
+        data_without_checksum = struct.pack("<4sII", self.magic, self.version, self.page_size)
+
+        # Compute checksum over header data only (not padding)
+        checksum = compute_checksum(data_without_checksum)
+
+        # Pack with actual checksum
+        data = struct.pack(HEADER_PAGE_FMT, self.magic, self.version, self.page_size, checksum)
         return data.ljust(size, b"\x00")
 
     @classmethod
-    def from_bytes(cls, data: bytes) -> Self:
-        """Deserialize from bytes."""
+    def from_bytes(cls, data: bytes, verify_checksum: bool = True) -> Self:
+        """Deserialize from bytes, optionally verifying checksum."""
         if len(data) < HEADER_PAGE_SIZE:
             raise ValueError(f"Data too short: expected at least {HEADER_PAGE_SIZE} bytes")
 
-        magic, version, page_size = struct.unpack(HEADER_PAGE_FMT, data[:HEADER_PAGE_SIZE])
+        magic, version, page_size, checksum = struct.unpack(HEADER_PAGE_FMT, data[:HEADER_PAGE_SIZE])
 
         if magic != MAGIC:
             raise ValueError(f"Invalid magic bytes: expected {MAGIC!r}, got {magic!r}")
+
+        if verify_checksum:
+            # Checksum covers header data only (magic, version, page_size)
+            data_without_checksum = struct.pack("<4sII", magic, version, page_size)
+            expected = compute_checksum(data_without_checksum)
+            if checksum != expected:
+                raise ValueError(f"Checksum mismatch: expected {expected}, got {checksum}")
 
         return cls(magic=magic, version=version, page_size=page_size)
 
