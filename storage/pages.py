@@ -279,6 +279,12 @@ class LeafPage(BaseModel):
         # Assemble page without checksum first
         front_data = header_bytes + leaf_header + offsets_data
         padding_size = cell_area_start - len(front_data)
+
+        if padding_size < 0:
+            raise ValueError(
+                f"Page overflow: cells require {len(front_data) + len(cell_data)} bytes, but page size is {page_size}"
+            )
+
         full_page = front_data + (b"\x00" * padding_size) + cell_data
 
         # Compute checksum over entire page (with zero checksum in header)
@@ -290,6 +296,24 @@ class LeafPage(BaseModel):
 
         # Replace header in full page
         return header_bytes + full_page[PageHeader.SIZE :]
+
+    def available_space(self, page_size: int = DEFAULT_PAGE_SIZE) -> int:
+        """Calculate available space for new cells in bytes.
+
+        Returns the number of bytes available for additional cell data.
+        Each new cell requires: 2 (offset) + 4 (key_len + value_len) + len(key) + len(value)
+        """
+        # Fixed overhead: PageHeader + leaf_header (cell_count + right_sibling)
+        fixed_overhead = PageHeader.SIZE + LEAF_HEADER_SIZE
+
+        # Current cell offsets: 2 bytes each
+        offsets_size = 2 * len(self.cells)
+
+        # Current cell data size
+        cells_size = sum(4 + len(key) + len(value) for key, value in self.cells)
+
+        used = fixed_overhead + offsets_size + cells_size
+        return max(0, page_size - used)
 
     @classmethod
     def from_bytes(cls, data: bytes, verify_checksum: bool = True) -> Self:
@@ -367,6 +391,10 @@ class BranchPage(BaseModel):
         header = PageHeader(page_type=PageType.BRANCH, page_id=self.page_id, checksum=0)
         header_bytes = header.to_bytes()
 
+        content_size = len(header_bytes) + len(branch_data)
+        if content_size > page_size:
+            raise ValueError(f"Page overflow: branch data requires {content_size} bytes, but page size is {page_size}")
+
         # Assemble full page first
         full_page = (header_bytes + branch_data).ljust(page_size, b"\x00")
 
@@ -378,6 +406,21 @@ class BranchPage(BaseModel):
         header_bytes = header.to_bytes()
 
         return header_bytes + full_page[PageHeader.SIZE :]
+
+    def available_space(self, page_size: int = DEFAULT_PAGE_SIZE) -> int:
+        """Calculate available space for new keys in bytes.
+
+        Returns the number of bytes available for additional keys/children.
+        Each new key requires: 2 (key_len) + len(key) + 4 (child pointer)
+        """
+        # Fixed overhead: PageHeader + key_count + first child
+        fixed_overhead = PageHeader.SIZE + BRANCH_HEADER_SIZE + (4 if self.children else 0)
+
+        # Current keys and children (excluding first child)
+        keys_size = sum(2 + len(key) + 4 for key in self.keys)
+
+        used = fixed_overhead + keys_size
+        return max(0, page_size - used)
 
     @classmethod
     def from_bytes(cls, data: bytes, verify_checksum: bool = True) -> Self:
