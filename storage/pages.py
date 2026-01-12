@@ -467,11 +467,10 @@ class BranchPage(BaseModel):
         children = []
         keys = []
 
-        # First child
-        if key_count >= 0:
-            (child,) = struct.unpack("<I", data[offset : offset + 4])
-            children.append(child)
-            offset += 4
+        # First child (always present in a valid branch page)
+        (child,) = struct.unpack("<I", data[offset : offset + 4])
+        children.append(child)
+        offset += 4
 
         # Interleaved keys and children
         for _ in range(key_count):
