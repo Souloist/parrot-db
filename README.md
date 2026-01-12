@@ -113,11 +113,27 @@ Commands:
 uv run pytest
 ```
 
+## How to inspect
+
+```bash
+# Show database summary
+uv run python tools/db_inspect.py --db ./tmp/dev.db --summary
+
+# Show specific page
+uv run python tools/db_inspect.py --db ./tmp/dev.db --page 3
+
+# Show B+ tree structure (Stage 3+)
+uv run python tools/db_inspect.py --db ./tmp/dev.db --tree
+
+# Show freelist
+uv run python tools/db_inspect.py --db ./tmp/dev.db --freelist
+```
+
 ## Features to improve on
 
 - Client for naive implementation to support nested transactions (done)
 - Serialization Schema (done)
-- Page-based storage with dual meta pages
+- Page-based storage with dual meta pages (done)
 - Copy-on-write B+ tree
 - Transactions with atomic commits
 - Freelist and offline manual compaction
