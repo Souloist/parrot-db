@@ -185,6 +185,16 @@ class TestBranchPage:
         with pytest.raises(ValueError, match="Checksum mismatch"):
             BranchPage.from_bytes(bytes(data))
 
+    def test_empty_branch_page_invalid(self):
+        """BranchPage with keys=[] must have exactly 1 child, not 0."""
+        with pytest.raises(ValueError, match="BranchPage invariant violated"):
+            BranchPage(page_id=4, keys=[], children=[])
+
+    def test_mismatched_keys_children_invalid(self):
+        """BranchPage must have len(children) == len(keys) + 1."""
+        with pytest.raises(ValueError, match="BranchPage invariant violated"):
+            BranchPage(page_id=4, keys=[b"a", b"b"], children=[10, 20])  # Need 3 children
+
 
 class TestFreelist:
     """Tests for in-memory Freelist."""

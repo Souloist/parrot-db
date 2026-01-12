@@ -393,9 +393,7 @@ class BranchPage(BaseModel):
 
     @model_validator(mode="after")
     def validate_children_keys_invariant(self) -> Self:
-        """Ensure len(children) == len(keys) + 1 for non-empty pages."""
-        if not self.keys and not self.children:
-            return self
+        """Ensure len(children) == len(keys) + 1 always."""
         if len(self.children) != len(self.keys) + 1:
             raise ValueError(
                 f"BranchPage invariant violated: len(children)={len(self.children)} "
