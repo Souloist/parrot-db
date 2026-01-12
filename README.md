@@ -1,6 +1,81 @@
 # parrot-db 🦜
-Toy project of implementing a KV Database which supports transactions (OCC via snapshot isolation) and recovery
-via on disk logs
+
+A toy LMDB-inspired key-value storage engine in Python. [Copy-on-write B+ trees](https://www.bzero.se/ldapd/btree.html) 
+are a really elegant data structure which allow us to get database-grade features like MVCC (snapshot isolation) and 
+atomic durability without needing a buffer pool or a WAL. A couple downsides however, include limited write throughput
+with single writer, poor space efficiency (requiring routine compaction) and bad random I/O performance without an explicit
+buffer pool (leverage the OS page cache with mmap)
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Client API / REPL                        │
+│                  (get, put, delete, txn)                     │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────┐
+│                   Transaction Manager                        │
+│            Single writer, multiple readers (MVCC)            │
+│         Readers hold root pointer = consistent snapshot      │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+         ┌────────────────┴────────────────┐
+         │                                 │
+         ▼                                 ▼
+┌──────────────────┐              ┌──────────────────┐
+│  CoW B+ Tree     │              │   Dual Meta      │
+│                  │              │     Pages        │
+│  writes create   │              │                  │
+│  new path from   │◄────────────►│  atomic commit   │
+│  leaf to root    │              │  via page swap   │
+│                  │              │                  │
+└────────┬─────────┘              └────────┬─────────┘
+         │                                 │
+         └────────────────┬────────────────┘
+                          │
+         ┌────────────────▼────────────────┐
+         │           Pager                 │
+         │   fixed-size pages (4KB)        │
+         │   checksum validation           │
+         │   freelist management           │
+         └────────────────┬────────────────┘
+                          │
+                          ▼
+                   [ Data File ]
+```
+
+**Key Components:**
+
+| Component | Purpose |
+|-----------|---------|
+| **Transaction Manager** | Single writer with concurrent readers; readers get root pointer at txn start for snapshot isolation |
+| **CoW B+ Tree** | Copy-on-write B+ tree for O(log n) key lookup and range scans; mutations copy path from leaf to new root, old tree remains valid for existing readers |
+| **Dual Meta Pages** | Two alternating meta pages store root pointer + txn_id; atomic commit = write new root to inactive page, fsync, flip active; crash recovery picks highest valid txn_id |
+| **Pager** | Fixed-size page I/O with allocation and checksum validation |
+| **Freelist** | Tracks pages to reclaim; deferred freeing ensures old pages remain valid until all readers using them complete |
+
+**Data Flow (Write Path):**
+1. Write txn begins → acquires writer lock, reads current root
+2. Mutations create new pages (CoW) → builds new tree path
+3. Commit → write all new pages, fsync
+4. Write new root to inactive meta page, fsync
+5. Flip active meta pointer → commit visible to new readers
+6. Old pages added to pending-free list → reclaimed when no readers reference them
+
+**Why no WAL?**
+
+LMDB-style CoW provides atomicity without WAL:
+- Pages are never modified in place—new versions written to new locations
+- Meta page swap is atomic (single sector write)
+- Crash at any point → recover by reading valid meta page with highest txn_id
+- WAL available as optional enhancement for batching multiple commits
+
+**Space reclamation:**
+- Freed pages go to freelist for reuse by future writes
+- File doesn't shrink automatically (freed pages leave holes)
+- Offline compaction (`tools/compact.py`) rewrites database with only live pages
+- Future: auto-compact trigger when freelist exceeds configurable threshold
 
 ## Setup
 
@@ -40,8 +115,12 @@ uv run pytest
 
 ## Features to improve on
 
-* Support nested transactions (done)
-* Support snapshot isolation with data versions instead of copying state 
-* Support concurrency with locking on write
-* Support persistence to disk with write ahead log (WAL)
-* Add separate process to compact WAL into a snapshot
+- Client for naive implementation to support nested transactions (done)
+- Serialization Schema (done)
+- Page-based storage with dual meta pages
+- Copy-on-write B+ tree
+- Transactions with atomic commits
+- Freelist and offline manual compaction
+- Crash recovery
+- WAL for batched durability (optional)
+- Memory-mapped I/O (optional)

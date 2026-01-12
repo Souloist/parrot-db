@@ -75,6 +75,7 @@ cython_debug/
 # IDEs and editors
 .vscode/
 .idea/
+.claude/
 *.sublime-workspace
 *.sublime-project
 
