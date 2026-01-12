@@ -10,14 +10,14 @@ buffer pool (leverage the OS page cache with mmap)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Client API / REPL                        │
-│                  (get, put, delete, txn)                     │
+│                    Client API / REPL                        │
+│                 (get, put, delete, txn)                     │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
-│                   Transaction Manager                        │
-│            Single writer, multiple readers (MVCC)            │
-│         Readers hold root pointer = consistent snapshot      │
+│                  Transaction Manager                        │
+│           Single writer, multiple readers (MVCC)            │
+│        Readers hold root pointer = consistent snapshot      │
 └─────────────────────────┬───────────────────────────────────┘
                           │
          ┌────────────────┴────────────────┐
