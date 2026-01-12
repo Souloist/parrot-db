@@ -185,11 +185,9 @@ class FreelistPage(BaseModel):
 
     def to_bytes(self, page_size: int = DEFAULT_PAGE_SIZE) -> bytes:
         """Serialize to a full page with header and checksum."""
-        # Pack freelist data
+        # Pack freelist data in a single call (O(n) instead of O(n²)) via string concat
         count = len(self.free_page_ids)
-        freelist_data = struct.pack(FREELIST_COUNT_FMT, count)
-        for pid in self.free_page_ids:
-            freelist_data += struct.pack("<I", pid)
+        freelist_data = struct.pack(f"<I{count}I", count, *self.free_page_ids)
 
         # Create header with placeholder checksum
         header = PageHeader(page_type=PageType.FREELIST, page_id=self.page_id, checksum=0)
