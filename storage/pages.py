@@ -265,8 +265,8 @@ class LeafPage(BaseModel):
         """Serialize to a full page with header and checksum."""
         cell_count = len(self.cells)
 
-        # Calculate cell data and offsets
-        cell_data = b""
+        # Calculate cell data and offsets (O(n) using append + reverse)
+        cell_parts: list[bytes] = []
         cell_offsets: list[int] = []
 
         # Cells grow from end of page backward
@@ -276,8 +276,13 @@ class LeafPage(BaseModel):
             # Cell format: [key_len:2][value_len:2][key][value]
             cell = struct.pack("<HH", len(key), len(value)) + key + value
             cell_area_start -= len(cell)
-            cell_offsets.insert(0, cell_area_start)
-            cell_data = cell + cell_data
+            cell_offsets.append(cell_area_start)
+            cell_parts.append(cell)
+
+        # Reverse to get correct order
+        cell_offsets.reverse()
+        cell_parts.reverse()
+        cell_data = b"".join(cell_parts)
 
         # Build page content
         leaf_header = struct.pack(LEAF_HEADER_FMT, cell_count, self.right_sibling)
