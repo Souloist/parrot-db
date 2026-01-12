@@ -113,14 +113,39 @@ Commands:
 uv run pytest
 ```
 
+## How to inspect
+
+```bash
+# Show database summary
+uv run python tools/db_inspect.py --db ./tmp/dev.db --summary
+
+# Show specific page
+uv run python tools/db_inspect.py --db ./tmp/dev.db --page 3
+
+# Show B+ tree structure (Stage 3+)
+uv run python tools/db_inspect.py --db ./tmp/dev.db --tree
+
+# Show freelist
+uv run python tools/db_inspect.py --db ./tmp/dev.db --freelist
+```
+
 ## Features to improve on
 
 - Client for naive implementation to support nested transactions (done)
 - Serialization Schema (done)
-- Page-based storage with dual meta pages
+- Page-based storage with dual meta pages (done)
 - Copy-on-write B+ tree
 - Transactions with atomic commits
 - Freelist and offline manual compaction
 - Crash recovery
 - WAL for batched durability (optional)
 - Memory-mapped I/O (optional)
+
+## Learning Notes
+
+### Checkpoint: Stage 2
+- **What we added:** Page-based storage with Pager, page types (Header, Meta, Leaf, Branch, Freelist), and db_inspect tool
+- **Key design choice:** Checksums cover entire page including padding, ensuring any byte corruption is detected
+- **Edge case to remember:** File named `inspect.py` conflicts with Python stdlib; renamed to `db_inspect.py`
+- **How to inspect it:** `uv run python tools/db_inspect.py --db ./tmp/dev.db --summary`
+- **What I'd improve next:** Add debug mode flag to Pager that logs page allocations and writes
