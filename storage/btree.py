@@ -66,10 +66,6 @@ class BTree:
         # Page header (9) + key_count (2) + first child (4)
         self._branch_header_size = 9 + 2 + 4
 
-        # Cache for lazy sibling repair: (root_page_id, leaf_page_id) -> next_leaf_page_id
-        # Populated during range scans when stale siblings are detected and repaired
-        self._sibling_cache: dict[tuple[int, int], int] = {}
-
     def _leaf_fits(self, cells: list[tuple[bytes, bytes]]) -> bool:
         """Check if cells fit in a single leaf page."""
         # Fixed overhead + cell offsets (2 per cell) + cell data
@@ -440,11 +436,15 @@ class BTree:
     def range_scan(
         self, root_page_id: int, start: bytes | None = None, end: bytes | None = None
     ) -> Iterator[tuple[bytes, bytes]]:
-        """Iterate over key-value pairs in sorted order with lazy sibling repair.
+        """Iterate over key-value pairs in sorted order using cursor stack.
 
-        Uses sibling pointers optimistically but validates them. When a stale
-        sibling is detected (points to an old page version), falls back to tree
-        traversal and caches the correct sibling for future scans.
+        Uses a stack-based cursor to traverse leaves without relying on sibling
+        pointers. This avoids the stale pointer problem inherent in CoW trees
+        and provides consistent O(n) performance without cache warm-up.
+
+        The cursor stack tracks the path from root to current position. When a
+        leaf is exhausted, we pop up the stack to find the next subtree - this
+        is amortized O(1) per element since each node is pushed/popped once.
 
         Args:
             root_page_id: Root of the tree to scan
@@ -457,110 +457,76 @@ class BTree:
         if root_page_id == 0:
             return
 
-        # Find the starting leaf
-        leaf_page_id = self._find_scan_start_leaf(root_page_id, start)
-        last_key: bytes | None = None
+        # Stack of (branch_page, child_index) - tracks path for finding next leaf
+        stack: list[tuple[BranchPage, int]] = []
 
-        # Iterate through leaves using sibling pointers with validation
-        while leaf_page_id != 0:
-            page_data = self.pager._read_page_raw(leaf_page_id)
-            leaf = LeafPage.from_bytes(page_data)
-
-            for key, value in leaf.cells:
-                if start is not None and key < start:
-                    continue
-                if end is not None and key >= end:
-                    return
-                yield (key, value)
-                last_key = key
-
-            # Get next leaf - try cache first, then sibling pointer, then tree traversal
-            current_leaf_id = leaf_page_id
-            next_leaf_id = self._get_next_leaf(root_page_id, current_leaf_id, leaf.right_sibling, last_key)
-            leaf_page_id = next_leaf_id
-
-    def _get_next_leaf(self, root_page_id: int, current_leaf_id: int, sibling_ptr: int, last_key: bytes | None) -> int:
-        """Get the next leaf page, using cache or tree traversal.
-
-        On cache miss, always traverses the tree to find the correct next leaf.
-        Sibling pointers are not trusted because CoW can make them stale.
-
-        Returns 0 if there is no next leaf.
-        """
-        cache_key = (root_page_id, current_leaf_id)
-
-        # Check cache first - this is where subsequent scans get O(1) access
-        if cache_key in self._sibling_cache:
-            return self._sibling_cache[cache_key]
-
-        # Cache miss - traverse tree to find correct next leaf
-        if last_key is None:
-            self._sibling_cache[cache_key] = 0
-            return 0
-
-        next_leaf_id = self._find_next_leaf_by_key(root_page_id, last_key)
-        self._sibling_cache[cache_key] = next_leaf_id
-        return next_leaf_id
-
-    def _find_next_leaf_by_key(self, root_page_id: int, last_key: bytes) -> int:
-        """Find the next leaf containing keys > last_key via tree traversal.
-
-        This traverses from root to find the correct leaf, which handles
-        stale sibling pointers from CoW operations.
-
-        Returns the leaf page_id, or 0 if no such leaf exists.
-        """
-        # Track path for backtracking when we need to move to next subtree
-        path: list[tuple[BranchPage, int]] = []  # (branch, child_idx_taken)
+        # Traverse to starting leaf, building the stack
         page_id = root_page_id
-
-        # Traverse down to find the leaf containing last_key
         while True:
             page_data = self.pager._read_page_raw(page_id)
             page_type = page_data[0]
 
             if page_type == 4:  # LEAF
                 leaf = LeafPage.from_bytes(page_data)
-                # Check if this leaf has any keys > last_key
-                for key, _ in leaf.cells:
-                    if key > last_key:
-                        return page_id
-
-                # No keys > last_key in this leaf, need to find next leaf
-                # Backtrack up the path to find next subtree
-                while path:
-                    branch, child_idx = path.pop()
-                    if child_idx + 1 < len(branch.children):
-                        # There's a next child - traverse down to its leftmost leaf
-                        return self._find_leftmost_leaf(branch.children[child_idx + 1])
-
-                # No more leaves
-                return 0
-
+                break
             elif page_type == 3:  # BRANCH
                 branch = BranchPage.from_bytes(page_data)
-                child_idx = bisect.bisect_right(branch.keys, last_key)
-                path.append((branch, child_idx))
+                if start is None:
+                    child_idx = 0
+                else:
+                    child_idx = bisect.bisect_right(branch.keys, start)
+                stack.append((branch, child_idx))
                 page_id = branch.children[child_idx]
             else:
                 raise ValueError(f"Unexpected page type: {page_type}")
 
-    def _find_scan_start_leaf(self, page_id: int, start: bytes | None) -> int:
-        """Find the leaf page to start scanning from."""
-        page_data = self.pager._read_page_raw(page_id)
-        page_type = page_data[0]
+        # Iterate through all leaves using stack for navigation
+        while True:
+            # Yield matching keys from current leaf
+            for key, value in leaf.cells:
+                if start is not None and key < start:
+                    continue
+                if end is not None and key >= end:
+                    return
+                yield (key, value)
 
-        if page_type == 4:  # LEAF
-            return page_id
-        elif page_type == 3:  # BRANCH
-            branch = BranchPage.from_bytes(page_data)
-            if start is None:
-                child_page_id = branch.children[0]
-            else:
-                child_page_id = self._find_child(branch, start)
-            return self._find_scan_start_leaf(child_page_id, start)
-        else:
-            raise ValueError(f"Unexpected page type: {page_type}")
+            # Find next leaf by popping up stack until we find unexplored subtree
+            next_leaf = self._next_leaf_from_stack(stack)
+            if next_leaf is None:
+                return
+            leaf = next_leaf
+
+    def _next_leaf_from_stack(self, stack: list[tuple[BranchPage, int]]) -> LeafPage | None:
+        """Find the next leaf by backtracking up the cursor stack.
+
+        Pops the stack until finding a branch with an unexplored child,
+        then traverses down to the leftmost leaf of that subtree.
+
+        Returns None if no more leaves exist.
+        """
+        while stack:
+            branch, child_idx = stack.pop()
+            next_idx = child_idx + 1
+
+            if next_idx < len(branch.children):
+                # Found unexplored subtree - traverse down to leftmost leaf
+                stack.append((branch, next_idx))
+                page_id = branch.children[next_idx]
+
+                while True:
+                    page_data = self.pager._read_page_raw(page_id)
+                    page_type = page_data[0]
+
+                    if page_type == 4:  # LEAF
+                        return LeafPage.from_bytes(page_data)
+                    elif page_type == 3:  # BRANCH
+                        branch = BranchPage.from_bytes(page_data)
+                        stack.append((branch, 0))
+                        page_id = branch.children[0]
+                    else:
+                        raise ValueError(f"Unexpected page type: {page_type}")
+
+        return None
 
     def tree_height(self, root_page_id: int) -> int:
         """Return the height of the tree (0 for empty, 1 for leaf-only)."""
