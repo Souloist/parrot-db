@@ -185,9 +185,7 @@ class BTree:
         if self._leaf_fits(new_cells):
             # No split needed - create new leaf with all cells
             new_page_id = self.pager.allocate_page()
-            new_leaf = LeafPage(
-                page_id=new_page_id, cells=new_cells, right_sibling=leaf.right_sibling
-            )
+            new_leaf = LeafPage(page_id=new_page_id, cells=new_cells, right_sibling=leaf.right_sibling)
             self.pager.write_leaf_page(new_leaf)
             return InsertResult(new_page_id=new_page_id)
         else:
@@ -206,14 +204,10 @@ class BTree:
         left_page_id = self.pager.allocate_page()
 
         # Right leaf gets old sibling pointer
-        right_leaf = LeafPage(
-            page_id=right_page_id, cells=right_cells, right_sibling=old_right_sibling
-        )
+        right_leaf = LeafPage(page_id=right_page_id, cells=right_cells, right_sibling=old_right_sibling)
 
         # Left leaf points to right leaf
-        left_leaf = LeafPage(
-            page_id=left_page_id, cells=left_cells, right_sibling=right_page_id
-        )
+        left_leaf = LeafPage(page_id=left_page_id, cells=left_cells, right_sibling=right_page_id)
 
         self.pager.write_leaf_page(left_leaf)
         self.pager.write_leaf_page(right_leaf)
@@ -245,16 +239,13 @@ class BTree:
             new_children[child_idx] = result.new_page_id
 
             new_page_id = self.pager.allocate_page()
-            new_branch = BranchPage(
-                page_id=new_page_id, keys=list(branch.keys), children=new_children
-            )
+            new_branch = BranchPage(page_id=new_page_id, keys=list(branch.keys), children=new_children)
             self.pager.write_branch_page(new_branch)
             return InsertResult(new_page_id=new_page_id)
         else:
             # Child split - need to insert new separator
             return self._insert_separator(
-                branch, child_idx, result.split.separator_key,
-                result.split.left_page_id, result.split.right_page_id
+                branch, child_idx, result.split.separator_key, result.split.left_page_id, result.split.right_page_id
             )
 
     def _insert_separator(
@@ -279,18 +270,14 @@ class BTree:
         if self._branch_fits(new_keys, new_children):
             # No split needed
             new_page_id = self.pager.allocate_page()
-            new_branch = BranchPage(
-                page_id=new_page_id, keys=new_keys, children=new_children
-            )
+            new_branch = BranchPage(page_id=new_page_id, keys=new_keys, children=new_children)
             self.pager.write_branch_page(new_branch)
             return InsertResult(new_page_id=new_page_id)
         else:
             # Need to split branch
             return self._split_branch(new_keys, new_children)
 
-    def _split_branch(
-        self, keys: list[bytes], children: list[int]
-    ) -> InsertResult:
+    def _split_branch(self, keys: list[bytes], children: list[int]) -> InsertResult:
         """Split a branch node into two branches."""
         mid = len(keys) // 2
 
@@ -309,12 +296,8 @@ class BTree:
         left_page_id = self.pager.allocate_page()
         right_page_id = self.pager.allocate_page()
 
-        left_branch = BranchPage(
-            page_id=left_page_id, keys=left_keys, children=left_children
-        )
-        right_branch = BranchPage(
-            page_id=right_page_id, keys=right_keys, children=right_children
-        )
+        left_branch = BranchPage(page_id=left_page_id, keys=left_keys, children=left_children)
+        right_branch = BranchPage(page_id=right_page_id, keys=right_keys, children=right_children)
 
         self.pager.write_branch_page(left_branch)
         self.pager.write_branch_page(right_branch)
@@ -391,9 +374,7 @@ class BTree:
 
         # Create new leaf
         new_page_id = self.pager.allocate_page()
-        new_leaf = LeafPage(
-            page_id=new_page_id, cells=new_cells, right_sibling=leaf.right_sibling
-        )
+        new_leaf = LeafPage(page_id=new_page_id, cells=new_cells, right_sibling=leaf.right_sibling)
         self.pager.write_leaf_page(new_leaf)
         return DeleteResult(new_page_id=new_page_id, deleted=True)
 
@@ -431,9 +412,7 @@ class BTree:
 
         # Create new branch
         new_page_id = self.pager.allocate_page()
-        new_branch = BranchPage(
-            page_id=new_page_id, keys=new_keys, children=new_children
-        )
+        new_branch = BranchPage(page_id=new_page_id, keys=new_keys, children=new_children)
         self.pager.write_branch_page(new_branch)
         return DeleteResult(new_page_id=new_page_id, deleted=True)
 
@@ -481,24 +460,6 @@ class BTree:
                 if start is not None and i < len(branch.keys) and branch.keys[i] <= start:
                     continue
                 yield from self._range_scan_recursive(child_id, start, end)
-        else:
-            raise ValueError(f"Unexpected page type: {page_type}")
-
-    def _find_leaf(self, page_id: int, key: bytes | None) -> int:
-        """Find the leaf page containing the given key (or leftmost if key is None)."""
-        page_data = self.pager._read_page_raw(page_id)
-        page_type = page_data[0]
-
-        if page_type == 4:  # LEAF
-            return page_id
-        elif page_type == 3:  # BRANCH
-            branch = BranchPage.from_bytes(page_data)
-            if key is None:
-                # Go to leftmost child
-                child_page_id = branch.children[0]
-            else:
-                child_page_id = self._find_child(branch, key)
-            return self._find_leaf(child_page_id, key)
         else:
             raise ValueError(f"Unexpected page type: {page_type}")
 

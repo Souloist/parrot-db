@@ -264,13 +264,9 @@ class TestBTreeRangeScan:
             result_keys = [k for k, _ in results]
 
             # The separator key must be included (it exists in the tree)
-            assert separator in result_keys, (
-                f"Separator key {separator!r} missing from range scan results"
-            )
+            assert separator in result_keys, f"Separator key {separator!r} missing from range scan results"
             # It should be the first result when starting from it
-            assert result_keys[0] == separator, (
-                f"First result should be {separator!r}, got {result_keys[0]!r}"
-            )
+            assert result_keys[0] == separator, f"First result should be {separator!r}, got {result_keys[0]!r}"
 
 
 class TestBTreeSplitting:
