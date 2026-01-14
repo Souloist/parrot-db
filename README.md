@@ -134,9 +134,13 @@ uv run python tools/db_inspect.py --db ./tmp/dev.db --freelist
 - Client for naive implementation to support nested transactions (done)
 - Serialization Schema (done)
 - Page-based storage with dual meta pages (done)
-- Copy-on-write B+ tree
+- Copy-on-write B+ tree (done)
 - Transactions with atomic commits
 - Freelist and offline manual compaction
 - Crash recovery
 - WAL for batched durability (optional)
 - Memory-mapped I/O (optional)
+
+## Learning Notes
+
+See [learnings.md](learnings.md) for design decisions and implementation notes.
