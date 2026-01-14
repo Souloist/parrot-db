@@ -221,6 +221,57 @@ class TestBTreeRangeScan:
         keys = [k for k, _ in results]
         assert keys == [b"apple", b"banana", b"mango", b"zebra"]
 
+    def test_range_scan_start_equals_separator_key(self, pager: Pager):
+        """Test range scan when start key equals a separator in a branch node.
+
+        This tests the pruning logic - when start equals a separator key,
+        the scan must still include that key (which is in the right subtree).
+        """
+        btree = BTree(pager)
+        root = 0
+
+        # Insert enough keys to force splits and create branch nodes
+        # With 4KB pages, ~500 small keys will create a multi-level tree
+        all_keys = [f"key{i:05d}".encode() for i in range(500)]
+        for key in all_keys:
+            root = btree.insert(root, key, b"value")
+
+        # Verify tree has height > 1 (has branch nodes)
+        height = btree.tree_height(root)
+        assert height > 1, "Test requires multi-level tree"
+
+        # Collect ALL separator keys from ALL branch nodes in the tree
+        from storage.pages import BranchPage
+
+        def collect_separators(page_id: int) -> list[bytes]:
+            """Recursively collect all separator keys from branch nodes."""
+            page_data = pager._read_page_raw(page_id)
+            page_type = page_data[0]
+            if page_type != 3:  # Not a branch
+                return []
+            branch = BranchPage.from_bytes(page_data)
+            separators = list(branch.keys)
+            for child_id in branch.children:
+                separators.extend(collect_separators(child_id))
+            return separators
+
+        all_separators = collect_separators(root)
+        assert len(all_separators) > 0, "Should have separator keys"
+
+        # Test EVERY separator key
+        for separator in all_separators:
+            results = list(btree.range_scan(root, start=separator))
+            result_keys = [k for k, _ in results]
+
+            # The separator key must be included (it exists in the tree)
+            assert separator in result_keys, (
+                f"Separator key {separator!r} missing from range scan results"
+            )
+            # It should be the first result when starting from it
+            assert result_keys[0] == separator, (
+                f"First result should be {separator!r}, got {result_keys[0]!r}"
+            )
+
 
 class TestBTreeSplitting:
     """Test node splitting behavior."""
