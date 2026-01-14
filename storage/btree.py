@@ -39,6 +39,7 @@ class InsertResult:
 
     new_page_id: int
     split: SplitResult | None = None
+    leftmost_leaf: int = 0  # Leftmost leaf that needs predecessor update (0 = already handled)
 
 
 @dataclass
@@ -125,6 +126,47 @@ class BTree:
         idx = bisect.bisect_right(branch.keys, key)
         return branch.children[idx]
 
+    def _find_leftmost_leaf(self, page_id: int) -> int:
+        """Find the leftmost leaf page in the subtree rooted at page_id."""
+        page_data = self.pager._read_page_raw(page_id)
+        page_type = page_data[0]
+
+        if page_type == 4:  # LEAF
+            return page_id
+        elif page_type == 3:  # BRANCH
+            branch = BranchPage.from_bytes(page_data)
+            return self._find_leftmost_leaf(branch.children[0])
+        else:
+            raise ValueError(f"Unexpected page type: {page_type}")
+
+    def _update_rightmost_sibling(self, page_id: int, new_sibling: int) -> int:
+        """Update the rightmost leaf's sibling pointer in subtree rooted at page_id.
+
+        Returns the new page_id for the subtree root (CoW copy).
+        """
+        page_data = self.pager._read_page_raw(page_id)
+        page_type = page_data[0]
+
+        if page_type == 4:  # LEAF
+            leaf = LeafPage.from_bytes(page_data)
+            new_page_id = self.pager.allocate_page()
+            new_leaf = LeafPage(page_id=new_page_id, cells=leaf.cells, right_sibling=new_sibling)
+            self.pager.write_leaf_page(new_leaf)
+            return new_page_id
+        elif page_type == 3:  # BRANCH
+            branch = BranchPage.from_bytes(page_data)
+            # Recursively update rightmost child
+            rightmost_idx = len(branch.children) - 1
+            new_rightmost = self._update_rightmost_sibling(branch.children[rightmost_idx], new_sibling)
+            new_children = list(branch.children)
+            new_children[rightmost_idx] = new_rightmost
+            new_page_id = self.pager.allocate_page()
+            new_branch = BranchPage(page_id=new_page_id, keys=list(branch.keys), children=new_children)
+            self.pager.write_branch_page(new_branch)
+            return new_page_id
+        else:
+            raise ValueError(f"Unexpected page type: {page_type}")
+
     def insert(self, root_page_id: int, key: bytes, value: bytes) -> int:
         """Insert a key-value pair, returning the new root page_id.
 
@@ -187,7 +229,8 @@ class BTree:
             new_page_id = self.pager.allocate_page()
             new_leaf = LeafPage(page_id=new_page_id, cells=new_cells, right_sibling=leaf.right_sibling)
             self.pager.write_leaf_page(new_leaf)
-            return InsertResult(new_page_id=new_page_id)
+            # Signal that this leaf needs its predecessor's sibling pointer updated
+            return InsertResult(new_page_id=new_page_id, leftmost_leaf=new_page_id)
         else:
             # Need to split
             return self._split_leaf(new_cells, leaf.right_sibling)
@@ -222,6 +265,7 @@ class BTree:
                 right_page_id=right_page_id,
                 separator_key=separator_key,
             ),
+            leftmost_leaf=left_page_id,  # Left leaf needs predecessor update
         )
 
     def _insert_branch(self, branch: BranchPage, key: bytes, value: bytes) -> InsertResult:
@@ -238,14 +282,37 @@ class BTree:
             new_children = list(branch.children)
             new_children[child_idx] = result.new_page_id
 
+            # Handle sibling pointer update - cascade backwards through all predecessors
+            propagate_leftmost = 0  # 0 = handled at this level
+            if result.leftmost_leaf != 0:
+                if child_idx > 0:
+                    # Update predecessor's rightmost leaf to point to new leftmost
+                    new_children[child_idx - 1] = self._update_rightmost_sibling(
+                        new_children[child_idx - 1], result.leftmost_leaf
+                    )
+                    # Cascade: each predecessor update creates a new subtree that
+                    # previous predecessors need to point to
+                    for i in range(child_idx - 2, -1, -1):
+                        leftmost_of_next = self._find_leftmost_leaf(new_children[i + 1])
+                        new_children[i] = self._update_rightmost_sibling(new_children[i], leftmost_of_next)
+                    # Handled at this level, don't propagate
+                else:
+                    # No predecessor at this level, propagate to ancestor
+                    propagate_leftmost = result.leftmost_leaf
+
             new_page_id = self.pager.allocate_page()
             new_branch = BranchPage(page_id=new_page_id, keys=list(branch.keys), children=new_children)
             self.pager.write_branch_page(new_branch)
-            return InsertResult(new_page_id=new_page_id)
+            return InsertResult(new_page_id=new_page_id, leftmost_leaf=propagate_leftmost)
         else:
             # Child split - need to insert new separator
             return self._insert_separator(
-                branch, child_idx, result.split.separator_key, result.split.left_page_id, result.split.right_page_id
+                branch,
+                child_idx,
+                result.split.separator_key,
+                result.split.left_page_id,
+                result.split.right_page_id,
+                result.leftmost_leaf,
             )
 
     def _insert_separator(
@@ -255,6 +322,7 @@ class BTree:
         separator_key: bytes,
         left_page_id: int,
         right_page_id: int,
+        leftmost_leaf: int = 0,
     ) -> InsertResult:
         """Insert a separator key into a branch after a child split."""
         # Build new keys and children
@@ -266,18 +334,33 @@ class BTree:
         new_keys.insert(child_idx, separator_key)
         new_children.insert(child_idx + 1, right_page_id)
 
+        # Handle sibling pointer update - cascade backwards through all predecessors
+        propagate_leftmost = 0
+        if leftmost_leaf != 0:
+            if child_idx > 0:
+                # Update predecessor's rightmost leaf to point to new leftmost
+                new_children[child_idx - 1] = self._update_rightmost_sibling(new_children[child_idx - 1], leftmost_leaf)
+                # Cascade: each predecessor update creates a new subtree that
+                # previous predecessors need to point to
+                for i in range(child_idx - 2, -1, -1):
+                    leftmost_of_next = self._find_leftmost_leaf(new_children[i + 1])
+                    new_children[i] = self._update_rightmost_sibling(new_children[i], leftmost_of_next)
+            else:
+                # No predecessor at this level, propagate to ancestor
+                propagate_leftmost = leftmost_leaf
+
         # Check if branch needs to split
         if self._branch_fits(new_keys, new_children):
             # No split needed
             new_page_id = self.pager.allocate_page()
             new_branch = BranchPage(page_id=new_page_id, keys=new_keys, children=new_children)
             self.pager.write_branch_page(new_branch)
-            return InsertResult(new_page_id=new_page_id)
+            return InsertResult(new_page_id=new_page_id, leftmost_leaf=propagate_leftmost)
         else:
             # Need to split branch
-            return self._split_branch(new_keys, new_children)
+            return self._split_branch(new_keys, new_children, propagate_leftmost)
 
-    def _split_branch(self, keys: list[bytes], children: list[int]) -> InsertResult:
+    def _split_branch(self, keys: list[bytes], children: list[int], leftmost_leaf: int = 0) -> InsertResult:
         """Split a branch node into two branches."""
         mid = len(keys) // 2
 
@@ -309,6 +392,7 @@ class BTree:
                 right_page_id=right_page_id,
                 separator_key=separator_key,
             ),
+            leftmost_leaf=leftmost_leaf,  # Propagate to ancestor
         )
 
     def delete(self, root_page_id: int, key: bytes) -> int:
@@ -419,7 +503,11 @@ class BTree:
     def range_scan(
         self, root_page_id: int, start: bytes | None = None, end: bytes | None = None
     ) -> Iterator[tuple[bytes, bytes]]:
-        """Iterate over key-value pairs in sorted order.
+        """Iterate over key-value pairs in sorted order using sibling pointers.
+
+        Uses leaf sibling pointers for efficient sequential access. This is safe
+        with CoW because each snapshot has a consistent sibling chain - old pages
+        point to old siblings, new pages point to new siblings.
 
         Args:
             root_page_id: Root of the tree to scan
@@ -432,34 +520,37 @@ class BTree:
         if root_page_id == 0:
             return
 
-        # Use in-order traversal instead of sibling pointers
-        # This ensures correctness with CoW where siblings may be stale
-        yield from self._range_scan_recursive(root_page_id, start, end)
+        # Find the starting leaf
+        leaf_page_id = self._find_scan_start_leaf(root_page_id, start)
 
-    def _range_scan_recursive(
-        self, page_id: int, start: bytes | None, end: bytes | None
-    ) -> Iterator[tuple[bytes, bytes]]:
-        """Recursively scan tree in sorted order."""
-        page_data = self.pager._read_page_raw(page_id)
-        page_type = page_data[0]
-
-        if page_type == 4:  # LEAF
+        # Iterate through leaves using sibling pointers
+        while leaf_page_id != 0:
+            page_data = self.pager._read_page_raw(leaf_page_id)
             leaf = LeafPage.from_bytes(page_data)
+
             for key, value in leaf.cells:
                 if start is not None and key < start:
                     continue
                 if end is not None and key >= end:
                     return
                 yield (key, value)
+
+            leaf_page_id = leaf.right_sibling
+
+    def _find_scan_start_leaf(self, page_id: int, start: bytes | None) -> int:
+        """Find the leaf page to start scanning from."""
+        page_data = self.pager._read_page_raw(page_id)
+        page_type = page_data[0]
+
+        if page_type == 4:  # LEAF
+            return page_id
         elif page_type == 3:  # BRANCH
             branch = BranchPage.from_bytes(page_data)
-            for i, child_id in enumerate(branch.children):
-                # Check if we can skip this subtree based on separator keys
-                if end is not None and i > 0 and branch.keys[i - 1] >= end:
-                    return
-                if start is not None and i < len(branch.keys) and branch.keys[i] <= start:
-                    continue
-                yield from self._range_scan_recursive(child_id, start, end)
+            if start is None:
+                child_page_id = branch.children[0]
+            else:
+                child_page_id = self._find_child(branch, start)
+            return self._find_scan_start_leaf(child_page_id, start)
         else:
             raise ValueError(f"Unexpected page type: {page_type}")
 

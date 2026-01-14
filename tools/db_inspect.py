@@ -62,6 +62,8 @@ def print_meta_pages(pager: Pager) -> None:
 
 def print_summary(pager: Pager) -> None:
     """Print database summary."""
+    from storage.btree import BTree
+
     print("=" * 50)
     print("DATABASE SUMMARY")
     print("=" * 50)
@@ -76,6 +78,16 @@ def print_summary(pager: Pager) -> None:
     print(f"  Free Pages: {pager.freelist.count()}")
     print(f"  File Size: {pager.page_count * pager.page_size} bytes")
     print()
+
+    # Tree statistics
+    meta = pager.read_active_meta()
+    if meta.root_page_id != 0:
+        btree = BTree(pager)
+        print("=== B+ Tree Statistics ===")
+        print(f"  Root Page: {meta.root_page_id}")
+        print(f"  Tree Height: {btree.tree_height(meta.root_page_id)}")
+        print(f"  Total Keys: {btree.count_keys(meta.root_page_id)}")
+        print()
 
 
 def print_page(pager: Pager, page_id: int) -> None:
@@ -155,16 +167,74 @@ def print_freelist(pager: Pager) -> None:
 
 
 def print_tree(pager: Pager) -> None:
-    """Print B+ tree structure (placeholder for Stage 3)."""
+    """Print B+ tree structure with traversal."""
+    from storage.btree import BTree
+
     print("=== B+ Tree Structure ===")
 
     meta = pager.read_active_meta()
     if meta.root_page_id == 0:
         print("  Tree is empty (no root page)")
-    else:
-        print(f"  Root Page ID: {meta.root_page_id}")
-        print("  (Tree traversal will be implemented in Stage 3)")
+        print()
+        return
+
+    btree = BTree(pager)
+    height = btree.tree_height(meta.root_page_id)
+    key_count = btree.count_keys(meta.root_page_id)
+
+    print(f"  Root Page ID: {meta.root_page_id}")
+    print(f"  Tree Height: {height}")
+    print(f"  Total Keys: {key_count}")
     print()
+
+    # Print tree structure with indentation
+    print("  Tree Layout:")
+    _print_tree_node(pager, meta.root_page_id, depth=0)
+    print()
+
+
+def _print_tree_node(pager: Pager, page_id: int, depth: int) -> None:
+    """Recursively print tree node information."""
+    indent = "    " + "  " * depth
+    data = pager._read_page_raw(page_id)
+    page_type = data[0]
+
+    if page_type == 4:  # LEAF
+        leaf = LeafPage.from_bytes(data)
+        print(f"{indent}[Leaf {page_id}] {len(leaf.cells)} cells")
+        if leaf.cells and depth < 3:
+            first_key = leaf.cells[0][0]
+            last_key = leaf.cells[-1][0]
+            first_repr = _key_repr(first_key)
+            last_repr = _key_repr(last_key)
+            print(f"{indent}  keys: {first_repr} .. {last_repr}")
+    elif page_type == 3:  # BRANCH
+        branch = BranchPage.from_bytes(data)
+        print(f"{indent}[Branch {page_id}] {len(branch.keys)} keys, {len(branch.children)} children")
+        if branch.keys and depth < 3:
+            first_sep = _key_repr(branch.keys[0])
+            last_sep = _key_repr(branch.keys[-1])
+            print(f"{indent}  separators: {first_sep} .. {last_sep}")
+        # Recursively print children (limit depth to avoid huge output)
+        if depth < 2:
+            for child_id in branch.children:
+                _print_tree_node(pager, child_id, depth + 1)
+        elif depth == 2:
+            print(f"{indent}  ({len(branch.children)} children not expanded)")
+
+
+def _key_repr(key: bytes, max_len: int = 20) -> str:
+    """Format a key for display."""
+    try:
+        text = key.decode("utf-8")
+        if len(text) > max_len:
+            return repr(text[:max_len] + "...")
+        return repr(text)
+    except UnicodeDecodeError:
+        hex_str = key[:max_len].hex()
+        if len(key) > max_len:
+            return f"0x{hex_str}..."
+        return f"0x{hex_str}"
 
 
 def main() -> None:
