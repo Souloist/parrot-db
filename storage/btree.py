@@ -108,7 +108,7 @@ class BTree:
 
     def _search(self, page_id: int, key: bytes) -> bytes | None:
         """Recursively search for a key starting from page_id."""
-        page_data = self.pager._read_page_raw(page_id)
+        page_data = self.pager.read_page_raw(page_id)
 
         # Check page type from first byte
         page_type = page_data[0]
@@ -125,8 +125,7 @@ class BTree:
 
     def _search_leaf(self, leaf: LeafPage, key: bytes) -> bytes | None:
         """Binary search for key in leaf cells."""
-        keys = [k for k, _ in leaf.cells]
-        idx = bisect.bisect_left(keys, key)
+        idx = bisect.bisect_left(leaf.cells, key, key=lambda x: x[0])
         if idx < len(leaf.cells) and leaf.cells[idx][0] == key:
             return leaf.cells[idx][1]
         return None
@@ -142,7 +141,7 @@ class BTree:
 
     def _find_leftmost_leaf(self, page_id: int) -> int:
         """Find the leftmost leaf page in the subtree rooted at page_id."""
-        page_data = self.pager._read_page_raw(page_id)
+        page_data = self.pager.read_page_raw(page_id)
         page_type = page_data[0]
 
         if page_type == PageType.LEAF:
@@ -182,7 +181,7 @@ class BTree:
 
     def _insert_recursive(self, page_id: int, key: bytes, value: bytes) -> InsertResult:
         """Recursively insert into subtree rooted at page_id."""
-        page_data = self.pager._read_page_raw(page_id)
+        page_data = self.pager.read_page_raw(page_id)
         page_type = page_data[0]
 
         if page_type == PageType.LEAF:
@@ -197,8 +196,7 @@ class BTree:
     def _insert_leaf(self, leaf: LeafPage, key: bytes, value: bytes) -> InsertResult:
         """Insert into a leaf node, splitting if necessary."""
         # Find insertion point and check for existing key
-        keys = [k for k, _ in leaf.cells]
-        idx = bisect.bisect_left(keys, key)
+        idx = bisect.bisect_left(leaf.cells, key, key=lambda x: x[0])
 
         # Build new cells list
         new_cells = list(leaf.cells)
@@ -221,7 +219,13 @@ class BTree:
             return self._split_leaf(new_cells, leaf.right_sibling)
 
     def _split_leaf(self, cells: list[tuple[bytes, bytes]], old_right_sibling: int) -> InsertResult:
-        """Split a leaf into two leaves."""
+        """Split a leaf into two leaves.
+
+        Note: We maintain right_sibling pointers during splits even though the
+        current range_scan uses cursor-stack traversal instead. These pointers
+        could serve as optimization hints in the future (see learnings.md for
+        the full analysis of sibling pointer approaches in CoW trees).
+        """
         mid = len(cells) // 2
 
         left_cells = cells[:mid]
@@ -231,10 +235,10 @@ class BTree:
         right_page_id = self.pager.allocate_page()
         left_page_id = self.pager.allocate_page()
 
-        # Right leaf gets old sibling pointer
+        # Right leaf inherits the old sibling pointer
         right_leaf = LeafPage(page_id=right_page_id, cells=right_cells, right_sibling=old_right_sibling)
 
-        # Left leaf points to right leaf
+        # Left leaf points to right leaf (valid within this split, may become stale after CoW)
         left_leaf = LeafPage(page_id=left_page_id, cells=left_cells, right_sibling=right_page_id)
 
         self.pager.write_leaf_page(left_leaf)
@@ -362,7 +366,7 @@ class BTree:
             return 0
 
         # Check if root is now a branch with single child
-        page_data = self.pager._read_page_raw(result.new_page_id)
+        page_data = self.pager.read_page_raw(result.new_page_id)
         page_type = page_data[0]
 
         if page_type == PageType.BRANCH:
@@ -375,7 +379,7 @@ class BTree:
 
     def _delete_recursive(self, page_id: int, key: bytes) -> DeleteResult:
         """Recursively delete from subtree rooted at page_id."""
-        page_data = self.pager._read_page_raw(page_id)
+        page_data = self.pager.read_page_raw(page_id)
         page_type = page_data[0]
 
         if page_type == PageType.LEAF:
@@ -389,8 +393,7 @@ class BTree:
 
     def _delete_leaf(self, leaf: LeafPage, key: bytes) -> DeleteResult:
         """Delete from a leaf node."""
-        keys = [k for k, _ in leaf.cells]
-        idx = bisect.bisect_left(keys, key)
+        idx = bisect.bisect_left(leaf.cells, key, key=lambda x: x[0])
 
         if idx >= len(leaf.cells) or leaf.cells[idx][0] != key:
             # Key not found
@@ -478,7 +481,7 @@ class BTree:
         # Traverse to starting leaf, building the stack
         page_id = root_page_id
         while True:
-            page_data = self.pager._read_page_raw(page_id)
+            page_data = self.pager.read_page_raw(page_id)
             page_type = page_data[0]
 
             if page_type == PageType.LEAF:
@@ -529,7 +532,7 @@ class BTree:
                 page_id = branch.children[next_idx]
 
                 while True:
-                    page_data = self.pager._read_page_raw(page_id)
+                    page_data = self.pager.read_page_raw(page_id)
                     page_type = page_data[0]
 
                     if page_type == PageType.LEAF:
@@ -553,7 +556,7 @@ class BTree:
 
         while True:
             height += 1
-            page_data = self.pager._read_page_raw(page_id)
+            page_data = self.pager.read_page_raw(page_id)
             page_type = page_data[0]
 
             if page_type == PageType.LEAF:

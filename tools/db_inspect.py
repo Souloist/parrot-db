@@ -105,7 +105,7 @@ def print_page(pager: Pager, page_id: int) -> None:
         return
 
     # Read page header to determine type
-    data = pager._read_page_raw(page_id)
+    data = pager.read_page_raw(page_id)
     header = PageHeader.from_bytes(data)
 
     print(f"=== Page {page_id} ===")
@@ -196,7 +196,7 @@ def print_tree(pager: Pager) -> None:
 def _print_tree_node(pager: Pager, page_id: int, depth: int) -> None:
     """Recursively print tree node information."""
     indent = "    " + "  " * depth
-    data = pager._read_page_raw(page_id)
+    data = pager.read_page_raw(page_id)
     page_type = data[0]
 
     if page_type == 4:  # LEAF

@@ -245,7 +245,7 @@ class TestBTreeRangeScan:
 
         def collect_separators(page_id: int) -> list[bytes]:
             """Recursively collect all separator keys from branch nodes."""
-            page_data = pager._read_page_raw(page_id)
+            page_data = pager.read_page_raw(page_id)
             page_type = page_data[0]
             if page_type != 3:  # Not a branch
                 return []

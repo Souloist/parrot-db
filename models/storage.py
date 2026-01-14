@@ -39,6 +39,7 @@ class KeyValue(BaseModel):
     key can exist simultaneously for snapshot isolation.
     """
 
+    # arbitrary_types_allowed permits bytes fields without Pydantic coercion
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     key: bytes
