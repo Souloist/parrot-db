@@ -12,7 +12,7 @@ written at correct offsets with proper checksums.
 
 import os
 from pathlib import Path
-from typing import Self
+from typing import BinaryIO, Self
 
 from storage.freelist import Freelist
 from storage.pages import (
@@ -46,7 +46,7 @@ class Pager:
     ):
         self.path = Path(path)
         self.page_size = page_size
-        self._file: open | None = None
+        self._file: BinaryIO | None = None
         self._freelist = Freelist()
         self._next_page_id = FIRST_DATA_PAGE_ID
 
@@ -80,7 +80,7 @@ class Pager:
         self._file = open(self.path, "r+b")
 
         # Read and validate header
-        header_data = self._read_page_raw(HEADER_PAGE_ID)
+        header_data = self.read_page_raw(HEADER_PAGE_ID)
         header = HeaderPage.from_bytes(header_data)
         self.page_size = header.page_size
 
@@ -98,7 +98,7 @@ class Pager:
         """Calculate file offset for a page ID."""
         return page_id * self.page_size
 
-    def _read_page_raw(self, page_id: int) -> bytes:
+    def read_page_raw(self, page_id: int) -> bytes:
         """Read raw bytes for a page."""
         if self._file is None:
             raise RuntimeError("Pager is closed")
@@ -126,7 +126,7 @@ class Pager:
 
     def read_header(self) -> HeaderPage:
         """Read the header page."""
-        data = self._read_page_raw(HEADER_PAGE_ID)
+        data = self.read_page_raw(HEADER_PAGE_ID)
         return HeaderPage.from_bytes(data)
 
     def read_meta_page(self, page_id: int, verify_checksum: bool = True) -> MetaPage:
@@ -134,7 +134,7 @@ class Pager:
         if page_id not in (META_PAGE_0_ID, META_PAGE_1_ID):
             raise ValueError(f"Invalid meta page ID: {page_id}")
 
-        data = self._read_page_raw(page_id)
+        data = self.read_page_raw(page_id)
         return MetaPage.from_bytes(data, verify_checksum=verify_checksum)
 
     def read_active_meta(self) -> MetaPage:
@@ -174,7 +174,7 @@ class Pager:
 
     def read_freelist_page(self, page_id: int, verify_checksum: bool = True) -> FreelistPage:
         """Read a freelist page."""
-        data = self._read_page_raw(page_id)
+        data = self.read_page_raw(page_id)
         return FreelistPage.from_bytes(data, verify_checksum=verify_checksum)
 
     def write_freelist_page(self, page: FreelistPage) -> None:
@@ -184,7 +184,7 @@ class Pager:
 
     def read_leaf_page(self, page_id: int, verify_checksum: bool = True) -> LeafPage:
         """Read a leaf page."""
-        data = self._read_page_raw(page_id)
+        data = self.read_page_raw(page_id)
         return LeafPage.from_bytes(data, verify_checksum=verify_checksum)
 
     def write_leaf_page(self, page: LeafPage) -> None:
@@ -194,7 +194,7 @@ class Pager:
 
     def read_branch_page(self, page_id: int, verify_checksum: bool = True) -> BranchPage:
         """Read a branch page."""
-        data = self._read_page_raw(page_id)
+        data = self.read_page_raw(page_id)
         return BranchPage.from_bytes(data, verify_checksum=verify_checksum)
 
     def write_branch_page(self, page: BranchPage) -> None:

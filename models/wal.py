@@ -11,8 +11,9 @@ Struct format reference (https://docs.python.org/3/library/struct.html):
 import struct
 import time
 from enum import IntEnum
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 # WALEntry format: [op:1][key_len:4][value_len:4][txn_id:8][timestamp:8][key][value]
 WAL_ENTRY_FMT = "<BIIQd"
@@ -43,6 +44,7 @@ class WALEntry(BaseModel):
         timestamp: Unix timestamp when the entry was created
     """
 
+    # arbitrary_types_allowed permits bytes fields without Pydantic coercion
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     op: WALOperation
@@ -57,6 +59,13 @@ class WALEntry(BaseModel):
         if isinstance(v, str):
             return v.encode("utf-8")
         return v
+
+    @model_validator(mode="after")
+    def validate_value_for_op(self) -> Self:
+        """Ensure value is empty for non-PUT operations."""
+        if self.op != WALOperation.PUT and self.value:
+            raise ValueError(f"{self.op.name} operations must have empty value")
+        return self
 
     @classmethod
     def create(cls, op: WALOperation, key: bytes, value: bytes, txn_id: int) -> "WALEntry":
