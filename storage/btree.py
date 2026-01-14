@@ -16,8 +16,24 @@ import bisect
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from models.storage import PAGE_HEADER_SIZE, PageType
 from storage.pager import Pager
-from storage.pages import BranchPage, LeafPage
+from storage.pages import (
+    BRANCH_HEADER_SIZE,
+    CELL_HEADER_SIZE,
+    LEAF_HEADER_SIZE,
+    BranchPage,
+    LeafPage,
+)
+
+# Size of a child pointer in branch pages (4-byte page_id)
+CHILD_POINTER_SIZE = 4
+
+# Size of a key length field (2 bytes)
+KEY_LENGTH_SIZE = 2
+
+# Size of a cell offset in leaf pages (2 bytes)
+CELL_OFFSET_SIZE = 2
 
 # Minimum fill factor before considering merge (not implemented in this stage)
 MIN_KEYS_PER_LEAF = 1
@@ -61,24 +77,23 @@ class BTree:
         self.min_keys_per_leaf = min_keys_per_leaf
         self._page_size = pager.page_size
 
-        # Page header (9) + leaf header cell_count (2) + right_sibling (4)
-        self._leaf_header_size = 9 + 2 + 4
-        # Page header (9) + key_count (2) + first child (4)
-        self._branch_header_size = 9 + 2 + 4
+        # Total fixed overhead for leaf pages
+        self._leaf_header_size = PAGE_HEADER_SIZE + LEAF_HEADER_SIZE
+        # Total fixed overhead for branch pages (includes first child pointer)
+        self._branch_header_size = PAGE_HEADER_SIZE + BRANCH_HEADER_SIZE + CHILD_POINTER_SIZE
 
     def _leaf_fits(self, cells: list[tuple[bytes, bytes]]) -> bool:
         """Check if cells fit in a single leaf page."""
-        # Fixed overhead + cell offsets (2 per cell) + cell data
-        # Cell data: key_len (2) + value_len (2) + key + value
-        overhead = self._leaf_header_size + 2 * len(cells)
-        data_size = sum(4 + len(k) + len(v) for k, v in cells)
+        # Fixed overhead + cell offsets + cell data
+        overhead = self._leaf_header_size + CELL_OFFSET_SIZE * len(cells)
+        data_size = sum(CELL_HEADER_SIZE + len(k) + len(v) for k, v in cells)
         return overhead + data_size <= self._page_size
 
     def _branch_fits(self, keys: list[bytes], children: list[int]) -> bool:
         """Check if keys and children fit in a single branch page."""
-        # Fixed overhead + key data (2 + len for each) + child pointers (4 for rest)
+        # Fixed overhead (includes first child) + per-key data (key_len + key + child pointer)
         overhead = self._branch_header_size
-        keys_size = sum(2 + len(k) + 4 for k in keys)  # key_len + key + child
+        keys_size = sum(KEY_LENGTH_SIZE + len(k) + CHILD_POINTER_SIZE for k in keys)
         return overhead + keys_size <= self._page_size
 
     def get(self, root_page_id: int, key: bytes) -> bytes | None:
@@ -98,10 +113,10 @@ class BTree:
         # Check page type from first byte
         page_type = page_data[0]
 
-        if page_type == 4:  # LEAF
+        if page_type == PageType.LEAF:
             leaf = LeafPage.from_bytes(page_data)
             return self._search_leaf(leaf, key)
-        elif page_type == 3:  # BRANCH
+        elif page_type == PageType.BRANCH:
             branch = BranchPage.from_bytes(page_data)
             child_page_id = self._find_child(branch, key)
             return self._search(child_page_id, key)
@@ -130,9 +145,9 @@ class BTree:
         page_data = self.pager._read_page_raw(page_id)
         page_type = page_data[0]
 
-        if page_type == 4:  # LEAF
+        if page_type == PageType.LEAF:
             return page_id
-        elif page_type == 3:  # BRANCH
+        elif page_type == PageType.BRANCH:
             branch = BranchPage.from_bytes(page_data)
             return self._find_leftmost_leaf(branch.children[0])
         else:
@@ -170,10 +185,10 @@ class BTree:
         page_data = self.pager._read_page_raw(page_id)
         page_type = page_data[0]
 
-        if page_type == 4:  # LEAF
+        if page_type == PageType.LEAF:
             leaf = LeafPage.from_bytes(page_data)
             return self._insert_leaf(leaf, key, value)
-        elif page_type == 3:  # BRANCH
+        elif page_type == PageType.BRANCH:
             branch = BranchPage.from_bytes(page_data)
             return self._insert_branch(branch, key, value)
         else:
@@ -350,7 +365,7 @@ class BTree:
         page_data = self.pager._read_page_raw(result.new_page_id)
         page_type = page_data[0]
 
-        if page_type == 3:  # BRANCH
+        if page_type == PageType.BRANCH:
             branch = BranchPage.from_bytes(page_data)
             if len(branch.keys) == 0:
                 # Root branch has no keys - collapse to single child
@@ -363,10 +378,10 @@ class BTree:
         page_data = self.pager._read_page_raw(page_id)
         page_type = page_data[0]
 
-        if page_type == 4:  # LEAF
+        if page_type == PageType.LEAF:
             leaf = LeafPage.from_bytes(page_data)
             return self._delete_leaf(leaf, key)
-        elif page_type == 3:  # BRANCH
+        elif page_type == PageType.BRANCH:
             branch = BranchPage.from_bytes(page_data)
             return self._delete_branch(branch, key)
         else:
@@ -466,10 +481,10 @@ class BTree:
             page_data = self.pager._read_page_raw(page_id)
             page_type = page_data[0]
 
-            if page_type == 4:  # LEAF
+            if page_type == PageType.LEAF:
                 leaf = LeafPage.from_bytes(page_data)
                 break
-            elif page_type == 3:  # BRANCH
+            elif page_type == PageType.BRANCH:
                 branch = BranchPage.from_bytes(page_data)
                 if start is None:
                     child_idx = 0
@@ -517,9 +532,9 @@ class BTree:
                     page_data = self.pager._read_page_raw(page_id)
                     page_type = page_data[0]
 
-                    if page_type == 4:  # LEAF
+                    if page_type == PageType.LEAF:
                         return LeafPage.from_bytes(page_data)
-                    elif page_type == 3:  # BRANCH
+                    elif page_type == PageType.BRANCH:
                         branch = BranchPage.from_bytes(page_data)
                         stack.append((branch, 0))
                         page_id = branch.children[0]
@@ -541,9 +556,9 @@ class BTree:
             page_data = self.pager._read_page_raw(page_id)
             page_type = page_data[0]
 
-            if page_type == 4:  # LEAF
+            if page_type == PageType.LEAF:
                 return height
-            elif page_type == 3:  # BRANCH
+            elif page_type == PageType.BRANCH:
                 branch = BranchPage.from_bytes(page_data)
                 page_id = branch.children[0]
             else:
