@@ -571,3 +571,65 @@ class TestBTreeByteSizeSplit:
         for i in range(10):
             key = f"key{i:02d}".encode()
             assert btree.get(root, key) == b"v" * 800
+
+    def test_branch_split_with_skewed_separator_sizes(self, pager: Pager):
+        """Direct test: branch split with skewed separator sizes should not overflow.
+
+        Creates a pathological case by directly calling _split_branch with
+        many small keys followed by a few large keys. Count-based split (mid=len//2)
+        would put all large keys on right side, causing overflow.
+
+        Branch page math (4096 bytes):
+        - Fixed overhead: ~19 bytes (header + first child pointer)
+        - Per separator: 2 (key_len) + key_size + 4 (child pointer)
+        - Small key (5 bytes): 11 bytes per separator
+        - Large key (500 bytes): 506 bytes per separator
+
+        With 200 small + 10 large keys (210 total):
+        - Count-based mid=105: Right gets 95 small + 10 large = 95*11 + 10*506 = 6105 bytes OVERFLOW
+        """
+        btree = BTree(pager)
+
+        # Create small separator keys
+        small_keys = [f"a{i:04d}".encode() for i in range(200)]  # 5 bytes each
+        # Create large separator keys that sort after small ones
+        large_keys = [f"z{i:04d}".encode() + b"x" * 495 for i in range(10)]  # 500 bytes each
+
+        all_keys = small_keys + large_keys  # 210 keys, sorted order
+        children = list(range(1000, 1000 + len(all_keys) + 1))  # Dummy child page IDs
+
+        # This would fail with count-based split due to overflow
+        result = btree._split_branch(all_keys, children)
+
+        # Verify split succeeded and returned valid result
+        assert result.split is not None
+        assert result.split.left_page_id != 0
+        assert result.split.right_page_id != 0
+
+        # Read back both branches and verify they fit (didn't overflow)
+        left_branch = pager.read_branch_page(result.split.left_page_id)
+        right_branch = pager.read_branch_page(result.split.right_page_id)
+
+        # Both should have been written successfully (no overflow error)
+        assert len(left_branch.keys) > 0
+        assert len(right_branch.keys) > 0
+
+    def test_branch_split_natural_workload(self, pager: Pager):
+        """Integration test: variable-length keys in realistic workload."""
+        btree = BTree(pager)
+        root = 0
+
+        # Insert entries that create variable-length separators
+        for i in range(2000):
+            # Alternate between short and long keys
+            if i % 10 == 0:
+                key = f"long{i:04d}".encode() + b"x" * 90  # ~100 bytes
+            else:
+                key = f"k{i:04d}".encode()  # ~6 bytes
+            value = b"v" * 20
+            root = btree.insert(root, key, value)
+
+        # Verify tree is valid
+        assert btree.tree_height(root) >= 2
+        count = btree.count_keys(root)
+        assert count == 2000

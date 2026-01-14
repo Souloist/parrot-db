@@ -142,6 +142,20 @@ With byte-size splitting:
 - Left:  ~97 small cells ≈ 4000 bytes ✓
 - Right: 3 small + 1 large ≈ 4000 bytes ✓
 
+### Branch Splits Have the Same Issue
+
+The same bug affects branch node splits. Branch nodes store separator keys (promoted from leaf splits), which inherit the variable-length nature of the original keys.
+
+```
+200 small separator keys (5 bytes each) + 10 large separator keys (500 bytes each)
+
+Count-based split at mid=105:
+- Left:  105 small keys ≈ 1155 bytes ✓
+- Right: 95 small + 10 large ≈ 6105 bytes ✗ OVERFLOW
+```
+
+The fix is identical: `_find_branch_split_point()` calculates byte size to find where both halves fit.
+
 ### Key Insight
 
-When implementing B+ tree splits with variable-length data, always split by byte size, not cell count. This is especially important when keys or values can vary significantly in size (e.g., user-provided strings, serialized objects).
+When implementing B+ tree splits with variable-length data, always split by byte size, not cell count. This applies to both leaf nodes (key-value cells) and branch nodes (separator keys). The bug is especially likely when keys or values can vary significantly in size (e.g., user-provided strings, serialized objects).

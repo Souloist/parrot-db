@@ -92,12 +92,15 @@ class BTree:
         """Check if cells fit in a single leaf page."""
         return self._leaf_size(cells) <= self._page_size
 
-    def _branch_fits(self, keys: list[bytes], children: list[int]) -> bool:
-        """Check if keys and children fit in a single branch page."""
-        # Fixed overhead (includes first child) + per-key data (key_len + key + child pointer)
+    def _branch_size(self, keys: list[bytes], children: list[int]) -> int:
+        """Calculate total byte size needed for a branch page with given keys/children."""
         overhead = self._branch_header_size
         keys_size = sum(KEY_LENGTH_SIZE + len(k) + CHILD_POINTER_SIZE for k in keys)
-        return overhead + keys_size <= self._page_size
+        return overhead + keys_size
+
+    def _branch_fits(self, keys: list[bytes], children: list[int]) -> bool:
+        """Check if keys and children fit in a single branch page."""
+        return self._branch_size(keys, children) <= self._page_size
 
     def get(self, root_page_id: int, key: bytes) -> bytes | None:
         """Look up a key starting from the given root.
@@ -342,9 +345,47 @@ class BTree:
             # Need to split branch
             return self._split_branch(new_keys, new_children)
 
+    def _find_branch_split_point(self, keys: list[bytes], children: list[int]) -> int:
+        """Find optimal split point for branch based on byte size.
+
+        Returns the index where keys[:index] goes to left branch.
+        The key at index becomes the separator promoted to parent.
+        """
+        target = self._page_size // 2
+
+        best_split = 1  # At minimum, left gets one key
+        for i in range(1, len(keys)):
+            # Left would get keys[:i] and children[:i+1]
+            left_size = self._branch_size(keys[:i], children[: i + 1])
+            if left_size > self._page_size:
+                break
+            if left_size <= target:
+                best_split = i
+            else:
+                # Past target but still fits - check if right also fits
+                # Right gets keys[i+1:] and children[i+1:]
+                right_size = self._branch_size(keys[i + 1 :], children[i + 1 :])
+                if right_size <= self._page_size:
+                    best_split = i
+                break
+
+        # Verify both halves fit
+        while best_split < len(keys) - 1:
+            left_fits = self._branch_fits(keys[:best_split], children[: best_split + 1])
+            right_fits = self._branch_fits(keys[best_split + 1 :], children[best_split + 1 :])
+            if left_fits and right_fits:
+                break
+            best_split += 1
+
+        return best_split
+
     def _split_branch(self, keys: list[bytes], children: list[int]) -> InsertResult:
-        """Split a branch node into two branches."""
-        mid = len(keys) // 2
+        """Split a branch node into two branches based on byte size.
+
+        Uses byte-size calculation to find split point, ensuring both halves fit
+        within page size. This handles variable-length separator keys correctly.
+        """
+        mid = self._find_branch_split_point(keys, children)
 
         # Left gets keys[:mid] and children[:mid+1]
         left_keys = keys[:mid]
