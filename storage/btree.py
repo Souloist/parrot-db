@@ -82,12 +82,15 @@ class BTree:
         # Total fixed overhead for branch pages (includes first child pointer)
         self._branch_header_size = PAGE_HEADER_SIZE + BRANCH_HEADER_SIZE + CHILD_POINTER_SIZE
 
-    def _leaf_fits(self, cells: list[tuple[bytes, bytes]]) -> bool:
-        """Check if cells fit in a single leaf page."""
-        # Fixed overhead + cell offsets + cell data
+    def _leaf_size(self, cells: list[tuple[bytes, bytes]]) -> int:
+        """Calculate total byte size needed for a leaf page with given cells."""
         overhead = self._leaf_header_size + CELL_OFFSET_SIZE * len(cells)
         data_size = sum(CELL_HEADER_SIZE + len(k) + len(v) for k, v in cells)
-        return overhead + data_size <= self._page_size
+        return overhead + data_size
+
+    def _leaf_fits(self, cells: list[tuple[bytes, bytes]]) -> bool:
+        """Check if cells fit in a single leaf page."""
+        return self._leaf_size(cells) <= self._page_size
 
     def _branch_fits(self, keys: list[bytes], children: list[int]) -> bool:
         """Check if keys and children fit in a single branch page."""
@@ -218,15 +221,41 @@ class BTree:
             # Need to split
             return self._split_leaf(new_cells, leaf.right_sibling)
 
-    def _split_leaf(self, cells: list[tuple[bytes, bytes]], old_right_sibling: int) -> InsertResult:
-        """Split a leaf into two leaves.
+    def _find_leaf_split_point(self, cells: list[tuple[bytes, bytes]]) -> int:
+        """Find optimal split point based on byte size, ensuring both halves fit."""
+        target = self._page_size // 2
 
-        Note: We maintain right_sibling pointers during splits even though the
-        current range_scan uses cursor-stack traversal instead. These pointers
-        could serve as optimization hints in the future (see learnings.md for
-        the full analysis of sibling pointer approaches in CoW trees).
+        # Find largest index where left half fits and is closest to target
+        best_split = 1  # At minimum, left gets one cell
+        for i in range(1, len(cells)):
+            left_size = self._leaf_size(cells[:i])
+            if left_size > self._page_size:
+                break
+            if left_size <= target:
+                best_split = i
+            else:
+                # Past target but still fits - check if this is better than previous
+                right_size = self._leaf_size(cells[i:])
+                if right_size <= self._page_size:
+                    best_split = i
+                break
+
+        # Verify both halves fit (handles edge cases)
+        while best_split < len(cells) - 1:
+            if self._leaf_fits(cells[:best_split]) and self._leaf_fits(cells[best_split:]):
+                break
+            best_split += 1
+
+        return best_split
+
+    def _split_leaf(self, cells: list[tuple[bytes, bytes]], old_right_sibling: int) -> InsertResult:
+        """Split a leaf into two leaves based on byte size.
+
+        Uses byte-size calculation to find split point, ensuring both halves fit
+        within page size. This handles variable-length keys/values correctly,
+        unlike count-based splitting which can overflow with skewed cell sizes.
         """
-        mid = len(cells) // 2
+        mid = self._find_leaf_split_point(cells)
 
         left_cells = cells[:mid]
         right_cells = cells[mid:]

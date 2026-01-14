@@ -489,3 +489,85 @@ class TestBTreePersistence:
                 key = f"key{i:03d}".encode()
                 expected = f"value{i}".encode()
                 assert btree.get(stored_root, key) == expected
+
+
+class TestBTreeByteSizeSplit:
+    """Test that leaf splits use byte size, not cell count."""
+
+    def test_skewed_cell_sizes_causes_overflow_with_count_split(self, pager: Pager):
+        """Demonstrates bug: count-based split overflows when large cell is in right half.
+
+        Setup: Fill a leaf with ~104 small cells (max that fits), then insert one
+        large cell that sorts last. Count-based split puts 52 small cells on left
+        and 52 small + 1 large on right. Right half overflows.
+
+        Page math (4096 byte page):
+        - Fixed overhead: 15 bytes (9 header + 6 leaf header)
+        - Per cell: 2 (offset) + 4 (cell header) + key_len + value_len
+        - Small cell (4-byte key, 33-byte value): 2 + 4 + 4 + 33 = 43 bytes
+        - Large cell (4-byte key, 3900-byte value): 2 + 4 + 4 + 3900 = 3910 bytes
+        - 104 small cells: 15 + 104*43 = 4487 bytes (too big, but close to split point)
+
+        With count-based split at mid=52:
+        - Right half: 52 small + 1 large = 15 + 53*2 + 52*41 + 3908 = 6159 > 4096!
+        """
+        btree = BTree(pager)
+        root = 0
+
+        # Insert small cells that sort before the large one
+        # Each: 4-byte key + 33-byte value = 37 data bytes + 6 overhead = 43 total
+        for i in range(100):
+            key = f"a{i:03d}".encode()  # 4 bytes: a000, a001, etc.
+            value = b"s" * 33  # 33 bytes
+            root = btree.insert(root, key, value)
+
+        # Insert large cell that sorts LAST - this triggers the problematic split
+        # With count-based split, this ends up in right half with ~50 small cells
+        large_key = b"zzzz"  # Sorts after all a### keys
+        large_value = b"L" * 3900
+        root = btree.insert(root, large_key, large_value)
+
+        # If bug exists, this raises "Page overflow" during split
+        # Verify all keys retrievable
+        assert btree.get(root, large_key) == large_value
+        for i in range(100):
+            key = f"a{i:03d}".encode()
+            assert btree.get(root, key) == b"s" * 33
+
+    def test_large_cell_at_start_with_many_small(self, pager: Pager):
+        """Large cell sorting first with many small cells following."""
+        btree = BTree(pager)
+        root = 0
+
+        # Large cell sorts first
+        large_key = b"aaaa"
+        large_value = b"L" * 3900
+        root = btree.insert(root, large_key, large_value)
+
+        # Add small cells that sort after
+        for i in range(100):
+            key = f"b{i:03d}".encode()
+            value = b"s" * 33
+            root = btree.insert(root, key, value)
+
+        # Verify all keys
+        assert btree.get(root, large_key) == large_value
+        for i in range(100):
+            key = f"b{i:03d}".encode()
+            assert btree.get(root, key) == b"s" * 33
+
+    def test_multiple_large_values_split_correctly(self, pager: Pager):
+        """Multiple large values should be distributed across splits properly."""
+        btree = BTree(pager)
+        root = 0
+
+        # Insert several medium-large values
+        for i in range(10):
+            key = f"key{i:02d}".encode()
+            value = b"v" * 800  # Each ~800 bytes, 10 would be ~8KB (needs split)
+            root = btree.insert(root, key, value)
+
+        # Verify all retrievable
+        for i in range(10):
+            key = f"key{i:02d}".encode()
+            assert btree.get(root, key) == b"v" * 800

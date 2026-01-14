@@ -98,3 +98,50 @@ def _next_leaf_from_stack_with_hint(self, stack, sibling_hint):
 ```
 
 But this adds complexity for marginal benefit—the stack approach is already O(1) amortized.
+
+## Bug Fix: Byte-Size Leaf Splitting
+
+### The Problem
+
+The original leaf split used count-based midpoint calculation:
+
+```python
+mid = len(cells) // 2
+left_cells = cells[:mid]
+right_cells = cells[mid:]
+```
+
+This assumes cells are roughly uniform size. With variable-length keys/values, one half can overflow even when a size-based split would fit both halves.
+
+### Pathological Case
+
+```
+100 small cells (43 bytes each) + 1 large cell (3910 bytes), sorted last
+
+Count-based split at mid=50:
+- Left:  50 small cells = ~2150 bytes ✓
+- Right: 50 small + 1 large = ~6060 bytes ✗ OVERFLOW
+```
+
+The large cell ends up grouped with too many small cells.
+
+### The Fix
+
+Split by accumulated byte size, targeting ~50% capacity per side:
+
+```python
+def _find_leaf_split_point(self, cells):
+    target = self._page_size // 2
+    for i in range(1, len(cells)):
+        if self._leaf_size(cells[:i]) > target:
+            return i
+    # ... validation to ensure both halves fit
+```
+
+With byte-size splitting:
+- Left:  ~97 small cells ≈ 4000 bytes ✓
+- Right: 3 small + 1 large ≈ 4000 bytes ✓
+
+### Key Insight
+
+When implementing B+ tree splits with variable-length data, always split by byte size, not cell count. This is especially important when keys or values can vary significantly in size (e.g., user-provided strings, serialized objects).
