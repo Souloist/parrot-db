@@ -102,3 +102,7 @@ $RECYCLE.BIN/
 # Local development files
 *.local
 *.pylint.d/
+
+# Project-specific
+recommendations.md
+storage-engine-spec.md

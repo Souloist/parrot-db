@@ -1,5 +1,12 @@
 # Learning Notes
 
+## Checkpoint: Stage 4 - Transactions with Atomic Commits
+- What we added: `txn/transaction.py` with ReadTransaction and WriteTransaction, `parrot_db.py` with ParrotDB database class
+- Key insight: Snapshot isolation comes "for free" with CoW - readers just hold their root_page_id, writers path-copy and atomically swap the meta page
+- Edge case to remember: Context manager auto-commits on success, auto-rollbacks on exception - matches SQLite behavior
+- How to test it: `uv run pytest tests/test_transactions.py -v`
+- What I'd improve next: Persist freelist to meta page (currently freelist_page_id=0)
+
 ## Checkpoint: Stage 3 - Copy-on-Write B+ Tree
 - What we added: `storage/btree.py` with full CoW B+ tree supporting insert, get, delete, and range_scan operations
 - Edge case to remember: Splits must be detected by calculating exact byte size needed, not by checking `available_space() >= 0` (which clips to 0)
