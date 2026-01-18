@@ -53,6 +53,10 @@ class ReadTransaction:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self._close()
 
+    def close(self) -> None:
+        """Public close to release transaction resources."""
+        self._close()
+
     def _close(self) -> None:
         """Mark transaction as inactive and notify database."""
         if self._active:
@@ -118,9 +122,14 @@ class WriteTransaction:
         if self._committed:
             raise RuntimeError("Transaction already committed")
 
-        self._db._commit_write_txn(self)
-        self._committed = True
-        self._active = False
+        try:
+            self._db._commit_write_txn(self)
+        except Exception:
+            self._active = False
+            raise
+        else:
+            self._committed = True
+            self._active = False
 
     def rollback(self) -> None:
         """Discard all changes made in this transaction."""

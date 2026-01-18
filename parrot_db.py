@@ -80,22 +80,23 @@ class ParrotDB:
 
     def _commit_write_txn(self, txn: WriteTransaction) -> None:
         """Commit a write transaction atomically."""
-        # Write new root to inactive meta page
-        inactive_meta_id = self._pager.get_inactive_meta_id()
-        new_meta = MetaPage(
-            page_id=inactive_meta_id,
-            txn_id=txn.txn_id,
-            root_page_id=txn.root_page_id,
-            freelist_page_id=0,  # Freelist persistence is Stage 5
-        )
-        self._pager.write_meta_page(new_meta)
+        try:
+            # Write new root to inactive meta page
+            inactive_meta_id = self._pager.get_inactive_meta_id()
+            new_meta = MetaPage(
+                page_id=inactive_meta_id,
+                txn_id=txn.txn_id,
+                root_page_id=txn.root_page_id,
+                freelist_page_id=0,  # Freelist persistence is Stage 5
+            )
+            self._pager.write_meta_page(new_meta)
 
-        # Sync to disk - this makes the commit durable
-        self._pager.sync()
-
-        # Release write lock
-        self._active_write_txn = None
-        self._write_lock.release()
+            # Sync to disk - this makes the commit durable
+            self._pager.sync()
+        finally:
+            # Always release write lock, even on failure
+            self._active_write_txn = None
+            self._write_lock.release()
 
     def _rollback_write_txn(self, txn: WriteTransaction) -> None:
         """Rollback a write transaction, discarding all changes."""

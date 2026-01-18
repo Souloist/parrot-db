@@ -259,6 +259,35 @@ class TestTransactionAPI:
         with pytest.raises(RuntimeError, match="no longer active"):
             txn.commit()
 
+    def test_read_transaction_close_is_public(self, db: ParrotDB):
+        """Read transactions can be closed without private APIs."""
+        txn = db.begin()
+        txn.close()
+
+        with pytest.raises(RuntimeError, match="no longer active"):
+            txn.get(b"key")
+
+
+class TestFailureHandling:
+    """Test failure handling for transactional commits."""
+
+    def test_failed_commit_releases_write_lock(self, db: ParrotDB, monkeypatch):
+        """Commit failures should not leave the write lock held."""
+        def raise_on_write(_meta):
+            raise OSError("simulated write failure")
+
+        monkeypatch.setattr(db._pager, "write_meta_page", raise_on_write)
+
+        txn = db.begin(write=True)
+        txn.put(b"key", b"value")
+
+        with pytest.raises(OSError, match="simulated write failure"):
+            txn.commit()
+
+        # A new write transaction should be allowed after failure.
+        txn2 = db.begin(write=True)
+        txn2.rollback()
+
 
 class TestPersistence:
     """Test data persistence across database opens."""
