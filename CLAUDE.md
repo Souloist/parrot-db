@@ -106,7 +106,7 @@ Copy-on-write B+ tree with path copying for MVCC support.
 | `get` | `(root_page_id, key) -> value \| None` | Look up key from given root |
 | `insert` | `(root_page_id, key, value) -> new_root_page_id` | Insert/update, returns new root |
 | `delete` | `(root_page_id, key) -> new_root_page_id` | Delete key, returns new root (0 if empty) |
-| `range_scan` | `(root_page_id, start, end) -> Iterator` | Iterate keys in sorted order |
+| `scan` | `(root_page_id, start, end) -> Iterator` | Iterate keys in sorted order |
 | `tree_height` | `(root_page_id) -> int` | Return tree height |
 | `count_keys` | `(root_page_id) -> int` | Count total keys |
 
@@ -163,7 +163,7 @@ with db.begin(write=True) as txn:
 
 # Read transaction (snapshot isolation)
 with db.begin() as txn:
-    for key, value in txn.range_scan():
+    for key, value in txn.scan():
         print(key, value)
 
 db.close()

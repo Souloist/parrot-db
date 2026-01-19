@@ -109,10 +109,10 @@ def main(db_path: str = "./tmp/repl.db"):
                     prefix_filter = parts[1].encode() if len(parts) > 1 else None
 
                     if active_txn:
-                        items = list(active_txn.range_scan())
+                        items = list(active_txn.scan())
                     else:
                         with db.begin() as txn:
-                            items = list(txn.range_scan())
+                            items = list(txn.scan())
 
                     if prefix_filter:
                         items = [(k, v) for k, v in items if k.startswith(prefix_filter)]

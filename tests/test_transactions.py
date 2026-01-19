@@ -155,7 +155,7 @@ class TestSnapshotIsolation:
             assert txn.get(b"new") == b"value"
             txn.commit()
 
-    def test_range_scan_sees_snapshot(self, db: ParrotDB):
+    def test_scan_sees_snapshot(self, db: ParrotDB):
         """Range scan operates on snapshot, not live data."""
         for i in range(10):
             db.put(f"key{i:02d}".encode(), f"value{i}".encode())
@@ -171,7 +171,7 @@ class TestSnapshotIsolation:
             write_txn.commit()
 
         # Range scan sees original snapshot
-        results = list(read_txn.range_scan())
+        results = list(read_txn.scan())
         assert len(results) == 10
         assert results[0] == (b"key00", b"value0")  # Not modified
         assert (b"key05", b"value5") in results  # Not deleted
@@ -242,6 +242,25 @@ class TestTransactionAPI:
 
         with pytest.raises(RuntimeError, match="no longer active"):
             txn.get(b"key")
+
+    def test_scan_iterator_checks_active_on_iteration(self, db: ParrotDB):
+        """Range scan iterator raises if transaction closes during iteration."""
+        for i in range(5):
+            db.put(f"key{i}".encode(), f"value{i}".encode())
+
+        txn = db.begin()
+        iterator = txn.scan()
+
+        # Get first item while transaction is active
+        first = next(iterator)
+        assert first == (b"key0", b"value0")
+
+        # Close transaction
+        txn.close()
+
+        # Continuing iteration should raise
+        with pytest.raises(RuntimeError, match="no longer active"):
+            next(iterator)
 
     def test_double_commit_raises(self, db: ParrotDB):
         """Committing twice raises error."""
@@ -366,7 +385,7 @@ class TestEdgeCases:
         assert db.get(b"key") is None
 
         with db.begin() as txn:
-            assert list(txn.range_scan()) == []
+            assert list(txn.scan()) == []
 
     def test_binary_keys_and_values(self, db: ParrotDB):
         """Binary keys and values work correctly."""
@@ -392,5 +411,5 @@ class TestEdgeCases:
             txn.commit()
 
         with db.begin() as txn:
-            results = list(txn.range_scan())
+            results = list(txn.scan())
             assert len(results) == 1000

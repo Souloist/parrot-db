@@ -39,11 +39,14 @@ class ReadTransaction:
             raise RuntimeError("Transaction is no longer active")
         return self._db._btree.get(self._root_page_id, key)
 
-    def range_scan(self, start: bytes | None = None, end: bytes | None = None) -> Iterator[tuple[bytes, bytes]]:
+    def scan(self, start: bytes | None = None, end: bytes | None = None) -> Iterator[tuple[bytes, bytes]]:
         """Iterate over key-value pairs in sorted order."""
         if not self._active:
             raise RuntimeError("Transaction is no longer active")
-        yield from self._db._btree.range_scan(self._root_page_id, start, end)
+        for item in self._db._btree.scan(self._root_page_id, start, end):
+            if not self._active:
+                raise RuntimeError("Transaction is no longer active")
+            yield item
 
     def __enter__(self) -> "ReadTransaction":
         return self
@@ -105,11 +108,14 @@ class WriteTransaction:
         self._root_page_id = self._db._btree.delete(self._root_page_id, key)
         return self._root_page_id != old_root
 
-    def range_scan(self, start: bytes | None = None, end: bytes | None = None) -> Iterator[tuple[bytes, bytes]]:
+    def scan(self, start: bytes | None = None, end: bytes | None = None) -> Iterator[tuple[bytes, bytes]]:
         """Iterate over key-value pairs in sorted order."""
         if not self._active:
             raise RuntimeError("Transaction is no longer active")
-        yield from self._db._btree.range_scan(self._root_page_id, start, end)
+        for item in self._db._btree.scan(self._root_page_id, start, end):
+            if not self._active:
+                raise RuntimeError("Transaction is no longer active")
+            yield item
 
     def commit(self) -> None:
         """Commit transaction atomically via meta page swap."""
