@@ -10,6 +10,14 @@ from pathlib import Path
 from parrot_db import ParrotDB
 
 
+def safe_decode(data: bytes) -> str:
+    """Decode bytes to string, falling back to repr() for non-UTF8 data."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return repr(data)
+
+
 def main(db_path: str = "./tmp/repl.db"):
     # Ensure directory exists
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -77,7 +85,7 @@ def main(db_path: str = "./tmp/repl.db"):
                         value = db.get(key)
 
                     if value is not None:
-                        print(f"{parts[1]} = {value.decode()}")
+                        print(f"{parts[1]} = {safe_decode(value)}")
                     else:
                         print("Key not found")
 
@@ -111,7 +119,7 @@ def main(db_path: str = "./tmp/repl.db"):
 
                     if items:
                         for key, value in items:
-                            print(f"  {key.decode()} = {value.decode()}")
+                            print(f"  {safe_decode(key)} = {safe_decode(value)}")
                         print(f"({len(items)} keys)")
                     else:
                         print("No keys found")

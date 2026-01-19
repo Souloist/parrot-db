@@ -112,7 +112,7 @@ class TestSnapshotIsolation:
         assert read_txn.get(b"key") == b"initial"
         assert read_txn.get(b"new_key") is None
 
-        read_txn._close()
+        read_txn.close()
 
         # New read transaction sees new data
         with db.begin() as txn:
@@ -139,8 +139,8 @@ class TestSnapshotIsolation:
         assert txn1.get(b"key") == b"value1"
         assert txn2.get(b"key") == b"value1"
 
-        txn1._close()
-        txn2._close()
+        txn1.close()
+        txn2.close()
 
     def test_writer_sees_own_changes(self, db: ParrotDB):
         """Writer can read its own uncommitted changes."""
@@ -177,7 +177,7 @@ class TestSnapshotIsolation:
         assert (b"key05", b"value5") in results  # Not deleted
         assert (b"key99", b"new") not in results  # Not added
 
-        read_txn._close()
+        read_txn.close()
 
 
 class TestSingleWriter:
@@ -207,9 +207,9 @@ class TestSingleWriter:
         txn2.get(b"key")
         txn3.get(b"key")
 
-        txn1._close()
-        txn2._close()
-        txn3._close()
+        txn1.close()
+        txn2.close()
+        txn3.close()
 
     def test_write_after_read_commit(self, db: ParrotDB):
         """Write transaction can start while read transactions exist."""
@@ -220,7 +220,7 @@ class TestSingleWriter:
             write_txn.put(b"key", b"value")
             write_txn.commit()
 
-        read_txn._close()
+        read_txn.close()
 
 
 class TestTransactionAPI:
@@ -238,7 +238,7 @@ class TestTransactionAPI:
     def test_closed_transaction_raises(self, db: ParrotDB):
         """Operations on closed transaction raise errors."""
         txn = db.begin()
-        txn._close()
+        txn.close()
 
         with pytest.raises(RuntimeError, match="no longer active"):
             txn.get(b"key")
@@ -273,6 +273,7 @@ class TestFailureHandling:
 
     def test_failed_commit_releases_write_lock(self, db: ParrotDB, monkeypatch):
         """Commit failures should not leave the write lock held."""
+
         def raise_on_write(_meta):
             raise OSError("simulated write failure")
 

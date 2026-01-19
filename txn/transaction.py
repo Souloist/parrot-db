@@ -39,9 +39,7 @@ class ReadTransaction:
             raise RuntimeError("Transaction is no longer active")
         return self._db._btree.get(self._root_page_id, key)
 
-    def range_scan(
-        self, start: bytes | None = None, end: bytes | None = None
-    ) -> Iterator[tuple[bytes, bytes]]:
+    def range_scan(self, start: bytes | None = None, end: bytes | None = None) -> Iterator[tuple[bytes, bytes]]:
         """Iterate over key-value pairs in sorted order."""
         if not self._active:
             raise RuntimeError("Transaction is no longer active")
@@ -107,9 +105,7 @@ class WriteTransaction:
         self._root_page_id = self._db._btree.delete(self._root_page_id, key)
         return self._root_page_id != old_root
 
-    def range_scan(
-        self, start: bytes | None = None, end: bytes | None = None
-    ) -> Iterator[tuple[bytes, bytes]]:
+    def range_scan(self, start: bytes | None = None, end: bytes | None = None) -> Iterator[tuple[bytes, bytes]]:
         """Iterate over key-value pairs in sorted order."""
         if not self._active:
             raise RuntimeError("Transaction is no longer active")
@@ -138,6 +134,15 @@ class WriteTransaction:
         self._db._rollback_write_txn(self)
         self._active = False
 
+    def close(self) -> None:
+        """Close is not supported for write transactions.
+
+        Write transactions must be explicitly committed or rolled back.
+        Use commit() to persist changes or rollback() to discard them.
+        """
+        if self._active:
+            raise RuntimeError("WriteTransaction must be committed or rolled back, not closed")
+
     def __enter__(self) -> "WriteTransaction":
         return self
 
@@ -147,6 +152,5 @@ class WriteTransaction:
                 # No exception and not committed - auto-commit
                 self.commit()
             else:
-                # Exception occurred or already committed - rollback if still active
-                if not self._committed:
-                    self.rollback()
+                # Exception occurred - rollback
+                self.rollback()

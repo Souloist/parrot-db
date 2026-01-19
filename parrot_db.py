@@ -135,11 +135,8 @@ class ParrotDB:
         """Put a key-value pair (auto write transaction)."""
         with self.begin(write=True) as txn:
             txn.put(key, value)
-            txn.commit()
 
     def delete(self, key: bytes) -> bool:
         """Delete a key (auto write transaction). Returns True if key existed."""
         with self.begin(write=True) as txn:
-            result = txn.delete(key)
-            txn.commit()
-            return result
+            return txn.delete(key)
