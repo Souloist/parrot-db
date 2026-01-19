@@ -521,7 +521,7 @@ class BTree:
         self.pager.write_branch_page(new_branch)
         return DeleteResult(new_page_id=new_page_id, deleted=True)
 
-    def range_scan(
+    def scan(
         self, root_page_id: int, start: bytes | None = None, end: bytes | None = None
     ) -> Iterator[tuple[bytes, bytes]]:
         """Iterate over key-value pairs in sorted order using cursor stack.
@@ -642,4 +642,4 @@ class BTree:
         if root_page_id == 0:
             return 0
 
-        return sum(1 for _ in self.range_scan(root_page_id))
+        return sum(1 for _ in self.scan(root_page_id))

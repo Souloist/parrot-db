@@ -148,12 +148,12 @@ class TestBTreeCopyOnWrite:
 class TestBTreeRangeScan:
     """Test range scan operations."""
 
-    def test_range_scan_empty_tree(self, pager: Pager):
+    def test_scan_empty_tree(self, pager: Pager):
         btree = BTree(pager)
-        results = list(btree.range_scan(0))
+        results = list(btree.scan(0))
         assert results == []
 
-    def test_range_scan_all_keys(self, pager: Pager):
+    def test_scan_all_keys(self, pager: Pager):
         btree = BTree(pager)
         root = 0
         expected = []
@@ -165,10 +165,10 @@ class TestBTreeRangeScan:
             expected.append((key, value))
 
         expected.sort()
-        results = list(btree.range_scan(root))
+        results = list(btree.scan(root))
         assert results == expected
 
-    def test_range_scan_with_start_key(self, pager: Pager):
+    def test_scan_with_start_key(self, pager: Pager):
         btree = BTree(pager)
         root = 0
 
@@ -178,11 +178,11 @@ class TestBTreeRangeScan:
             root = btree.insert(root, key, value)
 
         # Start from key005
-        results = list(btree.range_scan(root, start=b"key005"))
+        results = list(btree.scan(root, start=b"key005"))
         keys = [k for k, _ in results]
         assert keys == [b"key005", b"key006", b"key007", b"key008", b"key009"]
 
-    def test_range_scan_with_end_key(self, pager: Pager):
+    def test_scan_with_end_key(self, pager: Pager):
         btree = BTree(pager)
         root = 0
 
@@ -192,11 +192,11 @@ class TestBTreeRangeScan:
             root = btree.insert(root, key, value)
 
         # End before key005 (exclusive)
-        results = list(btree.range_scan(root, end=b"key005"))
+        results = list(btree.scan(root, end=b"key005"))
         keys = [k for k, _ in results]
         assert keys == [b"key000", b"key001", b"key002", b"key003", b"key004"]
 
-    def test_range_scan_with_start_and_end(self, pager: Pager):
+    def test_scan_with_start_and_end(self, pager: Pager):
         btree = BTree(pager)
         root = 0
 
@@ -205,11 +205,11 @@ class TestBTreeRangeScan:
             value = f"value{i}".encode()
             root = btree.insert(root, key, value)
 
-        results = list(btree.range_scan(root, start=b"key003", end=b"key007"))
+        results = list(btree.scan(root, start=b"key003", end=b"key007"))
         keys = [k for k, _ in results]
         assert keys == [b"key003", b"key004", b"key005", b"key006"]
 
-    def test_range_scan_returns_sorted_order(self, pager: Pager):
+    def test_scan_returns_sorted_order(self, pager: Pager):
         btree = BTree(pager)
         root = 0
 
@@ -217,11 +217,11 @@ class TestBTreeRangeScan:
         for key in [b"zebra", b"apple", b"mango", b"banana"]:
             root = btree.insert(root, key, b"value")
 
-        results = list(btree.range_scan(root))
+        results = list(btree.scan(root))
         keys = [k for k, _ in results]
         assert keys == [b"apple", b"banana", b"mango", b"zebra"]
 
-    def test_range_scan_start_equals_separator_key(self, pager: Pager):
+    def test_scan_start_equals_separator_key(self, pager: Pager):
         """Test range scan when start key equals a separator in a branch node.
 
         This tests the pruning logic - when start equals a separator key,
@@ -260,7 +260,7 @@ class TestBTreeRangeScan:
 
         # Test EVERY separator key
         for separator in all_separators:
-            results = list(btree.range_scan(root, start=separator))
+            results = list(btree.scan(root, start=separator))
             result_keys = [k for k, _ in results]
 
             # The separator key must be included (it exists in the tree)
@@ -329,7 +329,7 @@ class TestBTreeSplitting:
             root = btree.insert(root, key, value)
 
         # Range scan should return all keys in sorted order
-        results = list(btree.range_scan(root))
+        results = list(btree.scan(root))
         assert len(results) == 5000
 
         keys = [k for k, _ in results]

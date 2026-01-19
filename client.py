@@ -1,86 +1,173 @@
-from pprint import pprint
+"""Interactive REPL for ParrotDB.
 
-from db import ParrotDB
-from exceptions import KeyNotFound, NoActiveTransactions
+Provides a command-line interface for interacting with the database.
+Supports transactions with begin/commit/rollback commands.
+"""
+
+import sys
+from pathlib import Path
+
+from parrot_db import ParrotDB
 
 
-def main():
-    db = ParrotDB()
+def safe_decode(data: bytes) -> str:
+    """Decode bytes to string, falling back to repr() for non-UTF8 data."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return repr(data)
+
+
+def main(db_path: str = "./tmp/repl.db"):
+    # Ensure directory exists
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+
+    db = ParrotDB(path=db_path, create=True)
+    active_txn = None
+
     prompt = """
     Welcome to Parrot database!
     Commands:
         set <key> <value>   - Sets the value for the given key
         get <key>           - Returns the value for the given key
-        count <value>       - Returns number of keys with given value
         delete <key>        - Deletes key
+        keys [prefix]       - List all keys (optionally with prefix)
         exit                - Exits the program
 
-        begin               - Begins a transaction. Supported nested transactions
+        begin               - Begins a write transaction
         commit              - Commits current transaction
         rollback            - Rollback current transaction
     """
     print(prompt)
+    print(f"Database: {db_path}")
 
-    while True:
-        try:
-            command = input("> ").strip()
-            if command.lower() == "exit":
-                print("Exiting...")
-                break
+    try:
+        while True:
+            try:
+                prefix = "(txn) " if active_txn else ""
+                command = input(f"{prefix}> ").strip()
+                if not command:
+                    continue
 
-            parts = command.split()
-            action = parts[0].lower()
-            key = parts[1] if len(parts) > 1 else None
+                if command.lower() == "exit":
+                    if active_txn:
+                        print("Rolling back active transaction...")
+                        active_txn.rollback()
+                        active_txn = None
+                    print("Exiting...")
+                    break
 
-            if action == "set":
-                if len(parts) > 3:
-                    print("Invalid command. Use set <key> <value>.")
-                    continue
-                value = parts[2]
-                db.set(key, value)
-                print(f"Set {key} to {value}")
-            elif action == "get":
-                if len(parts) > 3:
-                    print("Invalid command. Use get <key>.")
-                    continue
-                try:
-                    value = db.get(key)
-                    print(f"Get {key}: {value}")
-                except KeyNotFound:
-                    print("Key not found")
-            elif action == "delete":
-                if len(parts) > 3:
-                    print("Invalid command. Use delete <key>.")
-                    continue
-                try:
-                    db.delete(key)
-                    print(f"Deleted {key}")
-                except KeyNotFound:
-                    print("Key not found")
-            elif action == "count":
-                count = db.count(key)
-                print(f"There are {count} keys with value {key}")
-            elif action == "begin":
-                db.begin()
-            elif action == "commit":
-                try:
-                    db.commit()
-                except NoActiveTransactions:
-                    print("Cannot commit with no active transactions")
-            elif action == "rollback":
-                try:
-                    db.rollback()
-                except NoActiveTransactions:
-                    print("Cannot rollback with no active transactions")
-            elif action == "show":
-                json = db.show_state()
-                pprint(json)
-            else:
-                print("Unknown command.")
-        except KeyboardInterrupt:
-            print("\nExiting...")
-            break
+                parts = command.split(maxsplit=2)
+                action = parts[0].lower()
+
+                if action == "set":
+                    if len(parts) < 3:
+                        print("Usage: set <key> <value>")
+                        continue
+                    key = parts[1].encode()
+                    value = parts[2].encode()
+
+                    if active_txn:
+                        active_txn.put(key, value)
+                    else:
+                        db.put(key, value)
+                    print(f"Set {parts[1]} = {parts[2]}")
+
+                elif action == "get":
+                    if len(parts) < 2:
+                        print("Usage: get <key>")
+                        continue
+                    key = parts[1].encode()
+
+                    if active_txn:
+                        value = active_txn.get(key)
+                    else:
+                        value = db.get(key)
+
+                    if value is not None:
+                        print(f"{parts[1]} = {safe_decode(value)}")
+                    else:
+                        print("Key not found")
+
+                elif action == "delete":
+                    if len(parts) < 2:
+                        print("Usage: delete <key>")
+                        continue
+                    key = parts[1].encode()
+
+                    if active_txn:
+                        deleted = active_txn.delete(key)
+                    else:
+                        deleted = db.delete(key)
+
+                    if deleted:
+                        print(f"Deleted {parts[1]}")
+                    else:
+                        print("Key not found")
+
+                elif action == "keys":
+                    prefix_filter = parts[1].encode() if len(parts) > 1 else None
+
+                    if active_txn:
+                        items = list(active_txn.scan())
+                    else:
+                        with db.begin() as txn:
+                            items = list(txn.scan())
+
+                    if prefix_filter:
+                        items = [(k, v) for k, v in items if k.startswith(prefix_filter)]
+
+                    if items:
+                        for key, value in items:
+                            print(f"  {safe_decode(key)} = {safe_decode(value)}")
+                        print(f"({len(items)} keys)")
+                    else:
+                        print("No keys found")
+
+                elif action == "begin":
+                    if active_txn:
+                        print("Transaction already active. Commit or rollback first.")
+                        continue
+                    active_txn = db.begin(write=True)
+                    print("Transaction started")
+
+                elif action == "commit":
+                    if not active_txn:
+                        print("No active transaction")
+                        continue
+                    active_txn.commit()
+                    active_txn = None
+                    print("Transaction committed")
+
+                elif action == "rollback":
+                    if not active_txn:
+                        print("No active transaction")
+                        continue
+                    active_txn.rollback()
+                    active_txn = None
+                    print("Transaction rolled back")
+
+                elif action == "help":
+                    print(prompt)
+
+                else:
+                    print(f"Unknown command: {action}. Type 'help' for commands.")
+
+            except KeyboardInterrupt:
+                print()
+                continue
+            except Exception as e:
+                print(f"Error: {e}")
+
+    finally:
+        if active_txn:
+            try:
+                active_txn.rollback()
+            except Exception:
+                pass
+        db.close()
 
 
 if __name__ == "__main__":
-    main()
+    db_path = sys.argv[1] if len(sys.argv) > 1 else "./tmp/repl.db"
+    main(db_path)
