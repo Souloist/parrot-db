@@ -104,5 +104,6 @@ $RECYCLE.BIN/
 *.pylint.d/
 
 # Project-specific
+progress.md
 recommendations.md
 storage-engine-spec.md
