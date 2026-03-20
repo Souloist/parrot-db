@@ -643,3 +643,32 @@ class BTree:
             return 0
 
         return sum(1 for _ in self.scan(root_page_id))
+
+    def collect_page_ids(self, root_page_id: int) -> set[int]:
+        """Collect all page IDs reachable from the given root.
+
+        This traverses the entire tree and returns a set of all page IDs.
+        Used for computing which pages are orphaned after a tree modification.
+        """
+        if root_page_id == 0:
+            return set()
+
+        result: set[int] = set()
+        self._collect_page_ids_recursive(root_page_id, result)
+        return result
+
+    def _collect_page_ids_recursive(self, page_id: int, result: set[int]) -> None:
+        """Recursively collect all page IDs in the subtree."""
+        result.add(page_id)
+
+        page_data = self.pager.read_page_raw(page_id)
+        page_type = page_data[0]
+
+        if page_type == PageType.LEAF:
+            return
+        elif page_type == PageType.BRANCH:
+            branch = BranchPage.from_bytes(page_data)
+            for child_id in branch.children:
+                self._collect_page_ids_recursive(child_id, result)
+        else:
+            raise ValueError(f"Unexpected page type: {page_type}")

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Parrot-db is a toy LMDB-inspired key-value storage engine in Python. It supports MVCC transactions with snapshot isolation, and is being developed in stages toward full WAL-based durability and B+ tree indexing.
 
-**Current Stage:** 4 (Transactions with atomic commits) - Complete
+**Current Stage:** 5 (Freelist, page reclamation, and compaction) - Complete
 
 See `storage-engine-spec.md` for the full staged development plan and `progress.md` for current status.
 
@@ -21,6 +21,8 @@ uv run ruff check .          # Lint
 uv run ruff format .         # Format
 uv run python client.py      # Interactive REPL (legacy)
 uv run python tools/db_inspect.py --db ./tmp/dev.db --summary  # Inspect database
+uv run python tools/db_copy.py source.db dest.db              # Copy database
+uv run python tools/db_copy.py source.db dest.db -c           # Copy with compaction
 ```
 
 ## Project Structure
@@ -37,7 +39,8 @@ parrot-db/
 │   ├── freelist.py         # In-memory freelist for page reuse
 │   └── btree.py            # Copy-on-write B+ tree implementation
 ├── tools/
-│   └── db_inspect.py       # Database inspection CLI tool
+│   ├── db_inspect.py       # Database inspection CLI tool
+│   └── db_copy.py          # Database copy with optional compaction
 ├── txn/                     # Transaction layer
 │   └── transaction.py      # ReadTransaction, WriteTransaction
 ├── tests/
@@ -45,6 +48,7 @@ parrot-db/
 │   ├── test_pager.py       # Storage layer tests
 │   ├── test_btree.py       # B+ tree tests
 │   ├── test_transactions.py # Transaction and MVCC tests
+│   ├── test_freelist.py    # Freelist and page reclamation tests
 │   └── test_db.py          # Database tests (legacy)
 ├── parrot_db.py            # ParrotDB: main database class
 ├── storage-engine-spec.md  # Staged development plan
@@ -85,9 +89,51 @@ Page-based storage with dual meta pages for atomic commits.
 | `LeafPage` | pages.py | B+ tree leaf with key-value cells |
 | `BranchPage` | pages.py | B+ tree internal node with separators |
 | `FreelistPage` | pages.py | Persisted list of free page IDs |
-| `Freelist` | freelist.py | In-memory free page tracking |
+| `Freelist` | freelist.py | In-memory free page tracking with MVCC support |
 
 **Checksum:** All pages use CRC32 checksums computed over the entire page content.
+
+## Freelist and Page Reclamation (Stage 5)
+
+MVCC-aware page management with deferred freeing for snapshot isolation.
+
+**Deferred Freeing:**
+Pages orphaned by writes can't be immediately freed if readers might still reference them. The freelist tracks:
+- **Free pages**: immediately available for allocation
+- **Pending-free pages**: keyed by txn_id, released when oldest reader advances past that txn_id
+
+**Page Reclamation Flow:**
+1. Write transaction modifies tree, creating new pages (CoW)
+2. On commit, orphaned pages (old tree - new tree) are marked pending-free
+3. When readers complete, `release_pending()` moves pages to free set
+4. Future allocations reuse free pages before extending file
+
+**Database Copy and Compaction:**
+
+```python
+# Raw copy (preserves layout, includes holes)
+db.copy("backup.db")
+
+# Compact copy (contiguous pages, smaller file)
+db.copy("compact.db", compact=True)
+```
+
+CLI tool:
+```bash
+uv run python tools/db_copy.py source.db backup.db        # Raw copy
+uv run python tools/db_copy.py source.db compact.db -c    # Compact copy
+```
+
+**Key Components:**
+
+| Method | Location | Description |
+|--------|----------|-------------|
+| `mark_pending_free` | Freelist | Mark pages for deferred release |
+| `release_pending` | Freelist | Move releasable pages to free set |
+| `collect_page_ids` | BTree | Collect all page IDs reachable from root |
+| `copy` | ParrotDB | Copy database with optional compaction |
+| `freelist_count` | ParrotDB | Number of immediately free pages |
+| `pending_free_count` | ParrotDB | Number of pages pending free |
 
 ## B+ Tree (Stage 3)
 
@@ -109,6 +155,7 @@ Copy-on-write B+ tree with path copying for MVCC support.
 | `scan` | `(root_page_id, start, end) -> Iterator` | Iterate keys in sorted order |
 | `tree_height` | `(root_page_id) -> int` | Return tree height |
 | `count_keys` | `(root_page_id) -> int` | Count total keys |
+| `collect_page_ids` | `(root_page_id) -> set[int]` | Collect all reachable page IDs |
 
 **Usage Pattern:**
 ```python
