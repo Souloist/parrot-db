@@ -210,6 +210,10 @@ class Pager:
             return free_id
 
         # Otherwise extend the file
+        return self.allocate_page_extend()
+
+    def allocate_page_extend(self) -> int:
+        """Allocate a new page ID by extending the file, bypassing the freelist."""
         page_id = self._next_page_id
         self._next_page_id += 1
         return page_id
