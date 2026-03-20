@@ -108,14 +108,17 @@ class Freelist:
         """Get pending-free pages as dict of txn_id -> sorted page list."""
         return {txn_id: sorted(pages) for txn_id, pages in self._pending_free.items()}
 
-    def to_page(self, page_id: int) -> FreelistPage:
+    def to_page(self, page_id: int, max_entries: int | None = None) -> FreelistPage:
         """Create a FreelistPage for persistence (free pages only).
 
         Note: pending-free pages are not persisted to the freelist page.
         On recovery, orphaned pages from uncommitted transactions are
         handled by tree traversal during compaction.
         """
-        return FreelistPage(page_id=page_id, free_page_ids=self.to_list())
+        entries = self.to_list()
+        if max_entries is not None:
+            entries = entries[:max_entries]
+        return FreelistPage(page_id=page_id, free_page_ids=entries)
 
     @classmethod
     def from_page(cls, page: FreelistPage) -> "Freelist":

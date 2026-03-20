@@ -351,3 +351,107 @@ class TestDatabaseCopy:
         # Copy is correct
         with ParrotDB(dest_path, create=False) as db:
             assert db.get(b"key") == b"value"
+
+
+class TestFreelistPageLeakOnEmpty:
+    """Test that the freelist page is not leaked when freelist becomes empty."""
+
+    def test_freelist_page_not_leaked_on_empty(self, db_path: Path):
+        """Freelist page stays referenced when free set becomes empty."""
+        with ParrotDB(db_path, create=True) as db:
+            # Create free pages
+            for i in range(10):
+                db.put(f"key{i}".encode(), b"x" * 100)
+            for i in range(10):
+                db.delete(f"key{i}".encode())
+
+            assert db.freelist_count > 0
+
+            # Consume all free pages by inserting new data
+            for i in range(50):
+                db.put(f"new{i}".encode(), b"y" * 100)
+
+        # Reopen - freelist page should still be tracked (not leaked)
+        with ParrotDB(db_path, create=False) as db:
+            size_before = db_path.stat().st_size
+
+            # Repeat the cycle: create and consume free pages
+            for i in range(50):
+                db.delete(f"new{i}".encode())
+            for i in range(50):
+                db.put(f"z{i}".encode(), b"z" * 100)
+
+        # File should not have grown by more than the data requires.
+        # Without the fix, each cycle leaks one freelist page.
+        with ParrotDB(db_path, create=False) as db:
+            size_after = db_path.stat().st_size
+            # Allow some growth for tree structure, but not unbounded
+            assert size_after <= size_before * 2
+
+
+class TestFreelistOverflow:
+    """Test freelist behavior when entries exceed single page capacity."""
+
+    def test_to_page_caps_at_max_entries(self):
+        """to_page with max_entries truncates the free list."""
+        fl = Freelist()
+        fl.free_many(list(range(100, 2100)))  # 2000 entries
+        assert fl.count() == 2000
+
+        page = fl.to_page(page_id=50, max_entries=1020)
+        assert len(page.free_page_ids) == 1020
+
+    def test_to_page_without_cap_includes_all(self):
+        """to_page without max_entries includes everything."""
+        fl = Freelist()
+        fl.free_many(list(range(100, 200)))
+        page = fl.to_page(page_id=50)
+        assert len(page.free_page_ids) == 100
+
+    def test_large_freelist_does_not_crash_on_commit(self, db_path: Path):
+        """Committing with >max_entries free pages does not raise."""
+        from storage.pages import DEFAULT_PAGE_SIZE, FreelistPage
+
+        max_entries = FreelistPage(page_id=0).max_entries(DEFAULT_PAGE_SIZE)
+
+        with ParrotDB(db_path, create=True) as db:
+            # Use large values so each leaf holds only one entry (~1 page per key)
+            for i in range(max_entries + 100):
+                db.put(f"key{i:05d}".encode(), b"x" * 4000)
+
+            for i in range(max_entries + 100):
+                db.delete(f"key{i:05d}".encode())
+
+            # Must not raise on next commit
+            db.put(b"after", b"overflow")
+            assert db.get(b"after") == b"overflow"
+
+
+class TestFreelistPersistOnClose:
+    """Test that in-memory freelist changes are flushed on close."""
+
+    def test_released_pages_survive_close(self, db_path: Path):
+        """Pages released by reader close are persisted when DB closes."""
+        # Phase 1: create pending-free pages via reader holding a snapshot
+        db = ParrotDB(db_path, create=True)
+        db.put(b"key", b"v1")
+
+        reader = db.begin(write=False)  # holds snapshot at txn 1
+
+        db.put(b"key", b"v2")  # creates orphaned pages pending-free at txn 1
+
+        pending_before = db.pending_free_count
+        assert pending_before > 0
+
+        # Close reader - releases pending pages to in-memory free set
+        reader.close()
+
+        free_after_release = db.freelist_count
+        assert free_after_release > 0
+
+        # Close DB - should persist the updated freelist
+        db.close()
+
+        # Phase 2: reopen and verify free pages survived
+        with ParrotDB(db_path, create=False) as db2:
+            assert db2.freelist_count == free_after_release

@@ -11,7 +11,7 @@ from typing import Self
 
 from models.storage import PageType
 from storage import BTree, Pager
-from storage.pages import BranchPage, LeafPage, MetaPage
+from storage.pages import BranchPage, FreelistPage, LeafPage, MetaPage
 from txn import ReadTransaction, WriteTransaction
 
 
@@ -129,8 +129,13 @@ class ParrotDB:
         We reuse the existing freelist page if available, or allocate a new
         page by extending the file (not from the freelist). This avoids the
         circular problem of consuming free pages to store the freelist.
+
+        When the freelist is empty but an old freelist page exists, we write
+        an empty freelist to keep the page referenced (prevents leaking one
+        page per empty-freelist cycle). Only entries up to max_entries are
+        persisted; overflow stays in memory and is recoverable via compaction.
         """
-        if self._pager.freelist.count() == 0:
+        if self._pager.freelist.count() == 0 and old_freelist_page_id == 0:
             return 0
 
         if old_freelist_page_id != 0:
@@ -138,7 +143,8 @@ class ParrotDB:
         else:
             freelist_page_id = self._pager.allocate_page_extend()
 
-        freelist_page = self._pager.freelist.to_page(freelist_page_id)
+        max_entries = FreelistPage(page_id=0).max_entries(self._pager.page_size)
+        freelist_page = self._pager.freelist.to_page(freelist_page_id, max_entries=max_entries)
         self._pager.write_freelist_page(freelist_page)
         return freelist_page_id
 
@@ -171,12 +177,34 @@ class ParrotDB:
             self._pager.freelist.release_pending(oldest_reader_txn)
 
     def close(self) -> None:
-        """Close the database."""
+        """Close the database, persisting any in-memory freelist changes."""
         if self._active_write_txn is not None:
             raise RuntimeError("Cannot close with active write transaction")
         if self._active_read_txns:
             raise RuntimeError("Cannot close with active read transactions")
+        self._persist_freelist_on_close()
         self._pager.close()
+
+    def _persist_freelist_on_close(self) -> None:
+        """Flush in-memory freelist state to disk before closing.
+
+        Pages released from pending-free (when readers close) only exist in
+        memory. Without this, a shutdown before the next write commit would
+        lose those freed pages.
+        """
+        old_meta = self._pager.read_active_meta()
+        freelist_page_id = self._persist_freelist(old_meta.freelist_page_id)
+
+        if freelist_page_id != old_meta.freelist_page_id:
+            inactive_meta_id = self._pager.get_inactive_meta_id()
+            new_meta = MetaPage(
+                page_id=inactive_meta_id,
+                txn_id=old_meta.txn_id + 1,
+                root_page_id=old_meta.root_page_id,
+                freelist_page_id=freelist_page_id,
+            )
+            self._pager.write_meta_page(new_meta)
+            self._pager.sync()
 
     def __enter__(self) -> Self:
         return self
